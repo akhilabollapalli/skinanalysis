@@ -25,6 +25,10 @@ data/**/*.webp
 *.pth
 *.onnx
 *.tflite
+# MediaPipe bundles: cleared by license, still never vendored. NOTE: .gitignore has
+# no inline comments -- a trailing '# ...' becomes part of the pattern and matches
+# nothing. Keep comments on their own line.
+*.task
 *.h5
 *.pb
 weights/
