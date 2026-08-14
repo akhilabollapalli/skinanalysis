@@ -65,23 +65,10 @@ def test_every_schema_roi_has_a_config_entry(roi_config: dict) -> None:
     assert {r.value for r in ROI} == set(roi_config["rois"])
 
 
-@pytest.mark.xfail(reason="rois.yaml landmark indices not filled yet", strict=True)
-def test_roi_polygon_indices_are_valid_landmarks(roi_config: dict) -> None:
-    """Indices must exist in the 478-point model and form an actual polygon."""
-    count = roi_config["meta"]["landmark_count"]
-    for name, body in roi_config["rois"].items():
-        indices = body.get("landmarks", [])
-        assert len(indices) >= 3, f"{name}: a polygon needs at least 3 points"
-        assert len(set(indices)) == len(indices), f"{name}: duplicate landmark index"
-        assert all(0 <= i < count for i in indices), f"{name}: index outside the model"
-
-
-@pytest.mark.xfail(reason="face.rois.build not implemented yet", strict=True)
-def test_roi_has_minimum_area(roi_config: dict) -> None:
-    """An eroded polygon that collapses to a sliver produces noise, not a measurement."""
-    built = rois.build(_landmarks(), (720, 800), roi_config, run_mode=RunMode.DEVELOPMENT)
-    for name, mask in built.items():
-        assert mask.sum() > 0, f"{name}: empty after erosion"
+# ROI polygon validity and minimum area moved to tests/test_roi_construction.py, which
+# has a landmark fixture that places the anchors the derived constructions need. The
+# assertions there are stronger: they are schema-aware (polygon vs derived) and they check
+# handedness and anchor-proportional scaling as well.
 
 
 @pytest.mark.xfail(reason="face.skin_mask.build not implemented yet", strict=True)
@@ -95,7 +82,6 @@ def test_skin_mask_does_not_include_background() -> None:
     assert not mask[-10:, :].any(), "bottom image border classified as skin"
 
 
-@pytest.mark.xfail(reason="face.rois.compose not implemented yet", strict=True)
 def test_intersection_is_never_larger_than_the_polygon() -> None:
     polygons = {"forehead": np.ones((10, 10), dtype=bool)}
     mask = np.zeros((10, 10), dtype=bool)

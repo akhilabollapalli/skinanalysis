@@ -16,8 +16,15 @@ import numpy as np
 
 #: MediaPipe FaceMesh V2 iris centres. Used as the scale anchor because inter-ocular
 #: distance is the most pose-stable facial measurement available from the landmark set.
-LEFT_IRIS_CENTER = 468
-RIGHT_IRIS_CENTER = 473
+#:
+#: NAMING: MediaPipe's LEFT/RIGHT are ANATOMICAL -- the subject's own left and right. The
+#: subject's left eye appears on the RIGHT side of the image. This project follows the same
+#: convention everywhere (ROI.LEFT_CHEEK is the subject's left cheek), because a cosmetic
+#: report says "your left cheek", not "the left of the photo". Getting this backwards
+#: mirrors every paired ROI and every asymmetry finding without changing any test that
+#: only checks magnitudes.
+RIGHT_IRIS_CENTER = 468   #: subject's right eye; ring 469-472
+LEFT_IRIS_CENTER = 473    #: subject's left eye;  ring 474-477
 
 
 def inter_ocular_distance(landmarks: np.ndarray) -> float:

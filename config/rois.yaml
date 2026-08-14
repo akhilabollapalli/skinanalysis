@@ -1,4 +1,4 @@
-# Anatomical ROI definitions as MediaPipe Face Landmarker indices.
+# Anatomical ROI definitions over the MediaPipe FaceMesh V2 landmark set.
 #
 # ROIs are landmark-defined polygons INTERSECTED with the skin mask -- landmarks alone
 # are never the mask (architecture doc §3.2).
@@ -8,48 +8,151 @@
 # CONSERVATIVE -- they sit inside the anatomy with margin, trading measurable area for
 # far fewer boundary false positives.
 #
-# Indices below are placeholders to be filled and visually verified with
-# `scripts/debug_roi.py` before any feature is calibrated.
+# ---------------------------------------------------------------------------------------
+# LEFT / RIGHT ARE ANATOMICAL
+#
+# Following MediaPipe: LEFT means the SUBJECT'S left, which appears on the RIGHT side of
+# the image. A cosmetic report says "your left cheek", not "the left of the photo".
+# Getting this backwards mirrors every paired ROI and every asymmetry finding, and would
+# pass any test that only checks magnitudes.
+# ---------------------------------------------------------------------------------------
+#
+# TWO ROI TYPES
+#
+#   type: polygon   A closed ring of landmark indices. Used where FaceMesh actually has
+#                   vertices bounding the region.
+#
+#   type: derived   FaceMesh has NO vertices for the region, so the polygon is constructed
+#                   from anchor landmarks plus offsets. Three ROIs need this:
+#                     forehead     - the mesh's top edge tracks the hairline, not the brow;
+#                                    there are no forehead-interior vertices at all.
+#                     crows_feet   - no landmarks lateral to the outer eye corners.
+#                     nasolabial   - the fold itself has no vertices; only its endpoints
+#                                    (nose wing, mouth corner) exist.
+#                   Offsets are fractions of the scale anchor (D1), never pixels, and they
+#                   live here rather than in code (CLAUDE.md §4).
+#
+# Every polygon below is UNVERIFIED until reviewed with scripts/debug_roi.py across poses,
+# hairstyles and facial hair. face/rois.py refuses to run in production while
+# meta.verified is false (D15).
 
 meta:
   landmark_model: mediapipe_face_landmarker
+  landmark_bundle: float16/1
   landmark_count: 478          # 468 surface + 10 iris
-  verified: false              # set true only after visual inspection across poses
+  handedness: anatomical       # LEFT = subject's left = image right
+  verified: false              # set true ONLY after visual inspection across poses
 
-# Shrink every polygon inward by this many pixels (scaled by face size) to keep
-# boundary pixels out of the measurement.
+# Shrink every polygon inward to keep boundary pixels out of the measurement.
+#
+# Anchored to inter-ocular distance, NOT face height (D1). Face height varies far more
+# with pitch than IOD does, so a face-height anchor would make ROI erosion and feature
+# windows scale differently under the same head tilt.
 erosion:
-  margin_frac_of_face_height: 0.010
+  margin_frac_of_iod: 0.045
+
+# Anchors reused by the derived constructions below. Named here so the constructions read
+# as anatomy rather than as index arithmetic.
+anchors:
+  left_brow:  [285, 295, 282, 283, 276]     # subject's left, medial -> lateral
+  right_brow: [55, 65, 52, 53, 46]          # subject's right, medial -> lateral
+  left_eye_outer: 263
+  right_eye_outer: 33
+  left_eye_lower: [374, 380, 381, 382]
+  right_eye_lower: [145, 153, 154, 155]
+  left_alar: 358                            # subject's left nostril wing
+  right_alar: 129
+  left_mouth_corner: 291
+  right_mouth_corner: 61
+  face_oval_top: [10, 109, 67, 297, 338]
+  glabella: 168                             # between the brows; forehead midline anchor
 
 rois:
+
+  # ---------------------------------------------------------------- derived (no vertices)
+
   forehead:
-    landmarks: []
-    notes: "Highest hair-contamination risk. Verify with tied-back and loose hair."
-  left_cheek:
-    landmarks: []
-    notes: "Primary redness/pigmentation region. Must exclude nasolabial shadow."
-  right_cheek:
-    landmarks: []
-    notes: "Must mirror left_cheek in area or asymmetry findings are artifacts."
-  nose:
-    landmarks: []
-    notes: "Exclude nostrils and specular tip highlight."
+    type: derived
+    construction: extrude_from_brow
+    # Extrude upward from the brow line and clip to the face oval. Height is capped well
+    # short of the mesh's top edge because that edge follows the hairline inconsistently
+    # across hairstyles -- and this is already the highest hair-contamination ROI.
+    anchors: [right_brow, left_brow]
+    extrude_frac_of_iod: 0.60
+    brow_clearance_frac_of_iod: 0.18   # start above the brow, not on it
+    clip_to: face_oval
+    notes: >
+      Highest hair-contamination risk. FaceMesh has no forehead-interior vertices, so this
+      is constructed, not indexed. Verify with tied-back AND loose hair, and with a
+      receding hairline, before trusting it.
+
   left_crows_feet:
-    landmarks: []
+    type: derived
+    construction: lateral_patch
+    anchors: [left_eye_outer]
+    direction: lateral            # away from the face midline
+    offset_frac_of_iod: 0.10      # clear of the lash line
+    width_frac_of_iod: 0.26
+    height_frac_of_iod: 0.30
+    clip_to: face_oval
+    notes: "No landmarks exist lateral to the outer eye corner. Constructed."
+
   right_crows_feet:
-    landmarks: []
-  left_under_eye:
-    landmarks: []
-    notes: "Exclude lash line and tear trough shadow."
-  right_under_eye:
-    landmarks: []
+    type: derived
+    construction: lateral_patch
+    anchors: [right_eye_outer]
+    direction: lateral
+    offset_frac_of_iod: 0.10
+    width_frac_of_iod: 0.26
+    height_frac_of_iod: 0.30
+    clip_to: face_oval
+
   left_nasolabial:
-    landmarks: []
-    notes: "Fold shadow mimics both a wrinkle and a dark spot. Handle explicitly."
+    type: derived
+    construction: band_between
+    anchors: [left_alar, left_mouth_corner]
+    width_frac_of_iod: 0.16
+    notes: >
+      Wrinkle-only (D8). The fold's cast shadow reads as a dark spot AND a ridge, and
+      erythema genuinely pools here, so it is excluded from pigmentation, redness severity,
+      texture scoring, and every asymmetry measurement.
+
   right_nasolabial:
-    landmarks: []
+    type: derived
+    construction: band_between
+    anchors: [right_alar, right_mouth_corner]
+    width_frac_of_iod: 0.16
+
+  # ---------------------------------------------------------------- direct polygons
+
+  left_cheek:
+    type: polygon
+    landmarks: [345, 346, 347, 348, 349, 350, 277, 329, 371, 266, 425, 411, 352, 280, 330]
+    notes: "Primary redness/pigmentation region. Must exclude the nasolabial shadow."
+
+  right_cheek:
+    type: polygon
+    landmarks: [116, 117, 118, 119, 120, 121, 47, 100, 142, 36, 205, 187, 123, 50, 101]
+    notes: "Must mirror left_cheek in area or asymmetry findings are artifacts."
+
+  nose:
+    type: polygon
+    landmarks: [168, 193, 245, 128, 114, 217, 198, 209, 49, 64, 98, 2, 327, 294, 279, 429,
+                420, 437, 343, 357, 465, 417]
+    notes: "Excludes nostrils and the specular tip highlight via the skin mask."
+
+  left_under_eye:
+    type: polygon
+    landmarks: [463, 341, 256, 252, 253, 254, 339, 255, 261, 448, 449, 450, 451, 452]
+    notes: "Excludes the lash line and the tear-trough shadow."
+
+  right_under_eye:
+    type: polygon
+    landmarks: [243, 112, 26, 22, 23, 24, 110, 25, 31, 228, 229, 230, 231, 232]
+
   chin:
-    landmarks: []
+    type: polygon
+    landmarks: [201, 200, 421, 428, 199, 208, 171, 148, 152, 377, 396, 175, 394]
     notes: "Highest beard-contamination risk."
 
 # Always excluded, regardless of ROI membership.
@@ -64,9 +167,23 @@ exclusions:
   specular_highlights: true
   deep_shadow: true
 
+# Landmark rings used to subtract excluded anatomy from every ROI. Taken from the
+# FaceMesh V2 contour groups, not hand-listed.
+exclusion_rings:
+  left_eye:  [249, 263, 466, 388, 387, 386, 385, 384, 398, 362, 382, 381, 380, 374, 373, 390]
+  right_eye: [7, 33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163]
+  lips: [0, 37, 39, 40, 185, 61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270,
+         269, 267]
+  left_eyebrow: [276, 283, 282, 295, 285]
+  right_eyebrow: [46, 53, 52, 65, 55]
+
 # Symmetry pairs, checked for equal post-mask area before any asymmetry is reported.
 symmetry_pairs:
   - [left_cheek, right_cheek]
   - [left_crows_feet, right_crows_feet]
   - [left_under_eye, right_under_eye]
   - [left_nasolabial, right_nasolabial]
+
+# Minimum area a polygon must retain after erosion to be scored at all. An eroded ROI that
+# collapses to a sliver produces noise, not a measurement.
+min_area_frac_of_iod2: 0.02
