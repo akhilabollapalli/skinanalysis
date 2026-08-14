@@ -1,5 +1,17 @@
 # Face images and any derived data must never be committed.
-data/
+data/*
+# EXCEPT population reference statistics (D1 stage B). These are aggregate
+# median/MAD per (concern, ROI) -- no images, nothing identifiable -- and they
+# determine every user-facing severity, so they must be versioned and auditable.
+# Image patterns below still apply inside this tree.
+!data/reference/
+
+# ...but never an image, anywhere under data/, whatever the exception above allows.
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.png
+data/**/*.heic
+data/**/*.webp
 *.jpg
 *.jpeg
 *.png

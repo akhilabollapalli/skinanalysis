@@ -1,0 +1,35 @@
+{
+  "schema_version": "1",
+  "protocol_version": "v1",
+  "capture_profile": "default",
+  "concern": "redness",
+  "measurements": [
+    "affected_area_ratio",
+    "median_positive_delta_a",
+    "p90_delta_a"
+  ],
+  "n_subjects": 0,
+  "median": {
+    "forehead": {},
+    "left_cheek": {},
+    "right_cheek": {},
+    "nose": {},
+    "chin": {}
+  },
+  "mad": {
+    "forehead": {},
+    "left_cheek": {},
+    "right_cheek": {},
+    "nose": {},
+    "chin": {}
+  },
+  "quantiles": {
+    "forehead": {},
+    "left_cheek": {},
+    "right_cheek": {},
+    "nose": {},
+    "chin": {}
+  },
+  "source_manifest_hash": null,
+  "calibrated": false
+}

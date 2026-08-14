@@ -1,0 +1,36 @@
+{
+  "schema_version": "1",
+  "protocol_version": "v1",
+  "capture_profile": "default",
+  "concern": "texture",
+  "measurements": [
+    "glcm_contrast",
+    "glcm_homogeneity",
+    "glcm_energy",
+    "glcm_entropy",
+    "gradient_energy",
+    "local_variance",
+    "hf_ratio"
+  ],
+  "n_subjects": 0,
+  "median": {
+    "forehead": {},
+    "left_cheek": {},
+    "right_cheek": {},
+    "nose": {}
+  },
+  "mad": {
+    "forehead": {},
+    "left_cheek": {},
+    "right_cheek": {},
+    "nose": {}
+  },
+  "quantiles": {
+    "forehead": {},
+    "left_cheek": {},
+    "right_cheek": {},
+    "nose": {}
+  },
+  "source_manifest_hash": null,
+  "calibrated": false
+}

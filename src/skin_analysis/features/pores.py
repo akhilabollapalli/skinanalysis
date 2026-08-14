@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..schemas import ROI, Concern, FeatureResult, Severity
+from ..schemas import Concern, FeatureContext, FeatureResultInternal, ImageCopy, Severity
 
 CONCERN = Concern.PORES
+IMAGE_COPY = ImageCopy.TEXTURE
 
 
 def analyze(
@@ -23,7 +24,9 @@ def analyze(
     skin_mask: np.ndarray,
     rois: dict[str, np.ndarray],
     config: dict,
-) -> FeatureResult:
+    *,
+    context: FeatureContext,
+) -> FeatureResultInternal:
     """Disabled in V1. Returns Severity.DISABLED without inspecting the image.
 
     The signature and schema are final so that enabling this concern later requires no
@@ -32,7 +35,7 @@ def analyze(
     Blocked on: commercial-open native-resolution pore masks
     """
     if not config.get("enabled", False):
-        return FeatureResult(
+        return FeatureResultInternal(
             concern=CONCERN,
             severity=Severity.DISABLED,
             regions=[],

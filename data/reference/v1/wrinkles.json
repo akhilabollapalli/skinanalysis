@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "protocol_version": "v1",
+  "capture_profile": "default",
+  "concern": "wrinkles",
+  "measurements": [
+    "line_density",
+    "line_length",
+    "ridge_contrast"
+  ],
+  "n_subjects": 0,
+  "median": {
+    "forehead": {},
+    "left_crows_feet": {},
+    "right_crows_feet": {},
+    "left_under_eye": {},
+    "right_under_eye": {},
+    "left_nasolabial": {},
+    "right_nasolabial": {}
+  },
+  "mad": {
+    "forehead": {},
+    "left_crows_feet": {},
+    "right_crows_feet": {},
+    "left_under_eye": {},
+    "right_under_eye": {},
+    "left_nasolabial": {},
+    "right_nasolabial": {}
+  },
+  "quantiles": {
+    "forehead": {},
+    "left_crows_feet": {},
+    "right_crows_feet": {},
+    "left_under_eye": {},
+    "right_under_eye": {},
+    "left_nasolabial": {},
+    "right_nasolabial": {}
+  },
+  "source_manifest_hash": null,
+  "calibrated": false
+}

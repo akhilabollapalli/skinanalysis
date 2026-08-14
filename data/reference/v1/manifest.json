@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "protocol_version": "v1",
+  "capture_profile": "default",
+  "created_on": null,
+  "calibration_source": null,
+  "min_cohort_subjects": 200,
+  "frozen": false,
+  "concerns": {
+    "redness": {
+      "file": "redness.json",
+      "calibrated": false
+    },
+    "pigmentation": {
+      "file": "pigmentation.json",
+      "calibrated": false
+    },
+    "texture": {
+      "file": "texture.json",
+      "calibrated": false
+    },
+    "wrinkles": {
+      "file": "wrinkles.json",
+      "calibrated": false
+    }
+  },
+  "notes": "Placeholder. Populated by a calibration run; never edited by hand."
+}

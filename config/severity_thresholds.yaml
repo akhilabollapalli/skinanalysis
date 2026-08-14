@@ -1,105 +1,208 @@
-# Feature parameters and ordinal severity thresholds.
+# Feature parameters, reference standardization, and ordinal severity thresholds.
 #
-# IMPORTANT: every value here is a PLACEHOLDER until calibrated against commercially
-# usable annotations on a subject-level holdout (see architecture doc §13, §20 phase 2).
-# Do not ship user-facing severity while `calibrated: false`.
+# IMPORTANT: every threshold here is a PLACEHOLDER until calibrated against commercially
+# usable annotations on a subject-level holdout (architecture doc §13, §20 phase 2).
+# While `meta.calibrated` is false, `ScanResultInternal.to_public()` raises
+# CalibrationRequiredError and the product has no user-facing output at all (D2).
 #
-# Thresholds are on the robust z-score of the concern's raw metric within its ROI:
-#     z = (m - median_ref[ROI]) / (MAD_ref[ROI] + eps)
+# TWO NORMALIZATIONS, DELIBERATELY NAMED DIFFERENTLY (D1). Do not conflate them:
 #
-# No feature module may hardcode any of these. If code needs a knob, it goes here.
+#   z_local  within-image, in features/*.py       "does this area differ from nearby skin?"
+#            z_local(x) = (f(x) - median(f(N_x))) / (1.4826*MAD(f(N_x)) + eps)
+#            NOT a severity score. A uniformly red face has weak local contrast.
+#
+#   z_ref    population, in decision/standardize.py       feature standardization
+#            z_ref = (m - Median_ref[ROI]) / (1.4826*MAD_ref[ROI] + eps)
+#            `ref` = a frozen, commercially cleared calibration cohort captured under the
+#            V1 acquisition protocol. NOT "people demographically like this user", and it
+#            does not define what normal or healthy skin is.
+#
+# No feature module may hardcode any value here. If code needs a knob, it goes here.
 
 meta:
   calibrated: false
   calibration_source: null    # e.g. "fairface_reannotation_v1"
   calibrated_on: null
   holdout: subject_level
+  protocol_version: v1
+
+# ---------------------------------------------------------------- reference statistics
+# D1 stage B. Populated by a calibration run, never by hand. Each leaf file carries its
+# own `calibrated` flag; a concern is publishable only when every primary ROI it needs
+# has a calibrated reference file AND meta.calibrated is true.
+reference_stats:
+  root: data/reference/v1
+  layout: "{root}/{concern}.json"   # median/mad keyed roi -> measurement
+  manifest: "{root}/manifest.json"
+  capture_profile: default
+  mad_scale: 1.4826           # consistent with z_local; makes MAD a sigma estimate
+  eps: 1.0e-6
+  # Floor on cohort size. A median and MAD from two or three people look entirely
+  # normal and mean nothing; the manifest may raise this but never lower it.
+  min_cohort_subjects: 200
+  # Reference sets are IMMUTABLE once frozen. A new protocol gets data/reference/v2/;
+  # a production reference is never edited in place, so old scans stay reproducible.
+  immutable_once_frozen: true
+
+# ---------------------------------------------------------------- capture scale anchor
+# D1: fixed pixel windows are retired. `129 px` does not mean the same thing at two
+# resolutions, so cohort statistics computed with one would not transfer between devices.
+# Every local window is a fraction of inter-ocular distance, resolved to an odd pixel
+# count at runtime.
+scale:
+  anchor: inter_ocular_distance
+  min_anchor_px: 90           # below this the capture cannot support local windows at all
 
 defaults:
   eps: 1.0e-6
-  # z-score cutoffs: not_detected < t0 <= mild < t1 <= moderate < t2 <= high
+  # z_ref cutoffs: not_detected < t0 <= mild < t1 <= moderate < t2 <= high
   thresholds: {t0: 0.5, t1: 1.5, t2: 2.5}
   # A region is reported only if it is at least this severe.
   min_reportable: mild
+  # D6 default aggregation. Concerns override `strong_single_roi` below.
+  aggregation:
+    method: max_with_support
+    min_rois_at_max: 2
+    demote_bands: 1
 
 # ---------------------------------------------------------------- ACTIVE features
 
 redness:
   enabled: true
   status: active
-  # Computed on the COLOR-CALIBRATED copy. CIELAB a* excess vs a local robust baseline.
+  # Runs on the STANDARDIZED COLOR-ANALYSIS COPY (D4 -- the term "color-calibrated" is
+  # retired; without a chart or RAW reference it overclaims). sRGB -> Lab/D65, no
+  # gray-world, no illuminant estimation. Illumination is handled by the local baseline.
   # Known limitation: without hemoglobin decomposition this partially measures lighting.
-  baseline:
-    window_px: 129           # local baseline window; must exceed lesion scale
+  image_copy: color
+  # Nasolabial excluded from redness severity (D8): the fold's cast shadow is too
+  # ambiguous against genuine erythema at V1 fidelity.
+  primary_rois: [forehead, left_cheek, right_cheek, nose, chin]
+  local:                       # D1 stage A
+    window_frac_of_iod: 0.50   # must exceed lesion scale
     use_roi_median: true
   metric:
     channel: a_star
     percentile_for_intensity: 95
-    min_component_px: 40     # reject speckle
+    # Component areas are fractions of anchor^2 (D1): a 40-px blob is a lesion at one
+    # resolution and sensor noise at another.
+    min_component_area_frac_of_iod2: 0.0007    # reject speckle
+  # Raw measurements handed to decision/standardize.py (D1 stage B).
+  raw_measurements: [affected_area_ratio, median_positive_delta_a, p90_delta_a]
   asymmetry:
     enabled: true
     # Left/right difference is reported only when capture QC shadow asymmetry passed,
-    # otherwise it is lighting, not skin.
+    # otherwise it is lighting, not skin. Nasolabial never participates (D8).
     require_qc_shadow_pass: true
+    excluded_rois: [left_nasolabial, right_nasolabial]
+  aggregation:
+    method: max_with_support
+    min_rois_at_max: 2
+    demote_bands: 1
+    # D6 escape hatch: one ROI may carry the level alone if the evidence is strong.
+    strong_single_roi:
+      min_affected_area_ratio: 0.18
+      min_p90_delta_a: 6.0
   thresholds: {t0: 0.5, t1: 1.5, t2: 2.5}
 
 pigmentation:
   enabled: true
   status: active
-  # CIELAB L* local deficit on the COLOR-CALIBRATED copy.
-  baseline:
-    window_px: 151
+  image_copy: color
+  primary_rois: [forehead, left_cheek, right_cheek, nose, chin]   # nasolabial excluded (D8)
+  local:
+    window_frac_of_iod: 0.60
     use_roi_median: true
   metric:
     channel: l_star
     direction: deficit
-    min_component_px: 25
-    max_component_px: 6000   # larger regions are shading, not spots
+    min_component_area_frac_of_iod2: 0.0004
+    max_component_area_frac_of_iod2: 0.10      # larger regions are shading, not spots
     # Reject candidates whose boundary gradient matches a shadow edge profile.
     shadow_rejection: true
     shadow_gradient_ratio: 0.35
+  raw_measurements: [spot_area_ratio, median_delta_L, spot_count]
+  aggregation:
+    method: max_with_support
+    min_rois_at_max: 2
+    demote_bands: 1
+    # Spots are focal and genuinely can be one-sided, so support comes from lesion
+    # evidence rather than ROI count (D6).
+    strong_single_roi:
+      min_spot_count: 6
+      min_spot_area_ratio: 0.04
+      min_median_delta_L: 4.0
   thresholds: {t0: 0.5, t1: 1.5, t2: 2.5}
 
 texture:
   enabled: true
   status: active
-  # Classical descriptors on the STRUCTURAL copy, per ROI patch.
+  # Runs on the TEXTURE COPY: luminance with fixed normalization only. CLAHE is local
+  # adaptive gain, so GLCM downstream of it would partly measure CLAHE's response to the
+  # neighborhood instead of the skin (D5).
+  image_copy: texture
+  clahe: false
+  primary_rois: [forehead, left_cheek, right_cheek, nose]         # nasolabial excluded (D8)
   patch:
-    size_px: 128
-    stride_px: 64
+    size_frac_of_iod: 0.52
+    stride_frac_of_iod: 0.26
     min_valid_frac: 0.75
+    max_patches_per_roi: 24    # D10 latency budget; sampled deterministically
   glcm:
     distances: [1, 2, 4]
     angles_deg: [0, 45, 90, 135]
     levels: 64
     features: [contrast, homogeneity, energy, entropy]
   frequency:
-    hf_band_lo: 0.25         # normalized frequency; tied to capture pixel density
+    hf_band_lo: 0.25           # normalized frequency; tied to capture pixel density
     hf_band_hi: 0.80
-  aggregate: robust_mean     # across patches within an ROI
+  aggregate: robust_mean       # across patches within an ROI
+  raw_measurements: [glcm_contrast, glcm_homogeneity, glcm_energy, glcm_entropy,
+                     gradient_energy, local_variance, hf_ratio]
+  aggregation:
+    method: max_with_support
+    min_rois_at_max: 2
+    demote_bands: 1
+    # Roughness is a field property; one rough ROI is a mask defect until proven
+    # otherwise. No single-ROI escape (D6).
+    strong_single_roi: null
   thresholds: {t0: 0.5, t1: 1.5, t2: 2.5}
 
 wrinkles:
   enabled: true
   status: active_baseline
-  # Multi-scale Gabor + Hessian ridge filtering on the STRUCTURAL copy.
+  # Runs on the RIDGE COPY. Multi-scale Gabor + Hessian ridge filtering.
   # Baseline only: responds to hair, glasses frames, and shadow edges as well as lines,
   # so suppression below is part of the algorithm, not an optional extra.
+  image_copy: ridge
+  # The only concern that may use nasolabial, because the fold IS a morphology target (D8).
+  primary_rois: [forehead, left_crows_feet, right_crows_feet,
+                 left_under_eye, right_under_eye, left_nasolabial, right_nasolabial]
+  clahe: false                 # ablation candidate only; adopting it refreezes calibration (D5)
   gabor:
     sigmas: [1.5, 2.5, 4.0]
     orientations: 8
-    lambda_px: [4, 8, 16]
+    lambda_frac_of_iod: [0.016, 0.033, 0.065]
   hessian:
     scales: [1.0, 2.0, 3.0]
     ridge_response: frangi
   morphology:
-    min_line_length_px: 25
-    max_line_width_px: 12
-    close_kernel_px: 3
+    min_line_length_frac_of_iod: 0.10
+    max_line_width_frac_of_iod: 0.05
+    close_kernel_frac_of_iod: 0.012
   suppression:
     hair: true
     glasses: true
-    roi_edge_margin_px: 8    # ignore responses hugging the ROI boundary
+    roi_edge_margin_frac_of_iod: 0.033   # ignore responses hugging the ROI boundary
+  raw_measurements: [line_density, line_length, ridge_contrast]
+  aggregation:
+    method: max_with_support
+    min_rois_at_max: 2
+    demote_bands: 1
+    # Forehead-only or crow's-feet-only wrinkling is normal anatomy, not an artifact (D6).
+    strong_single_roi:
+      min_line_density: 0.035
+      min_line_length: 0.22
   thresholds: {t0: 0.5, t1: 1.5, t2: 2.5}
 
 # ------------------------------------- EXPERIMENTAL — disabled pending clear labels
@@ -110,6 +213,8 @@ fine_lines:
   enabled: false
   status: experimental
   blocked_on: validated_high_resolution_commercial_labels
+  image_copy: ridge
+  primary_rois: [left_crows_feet, right_crows_feet, left_under_eye, right_under_eye]
   # Derived from the wrinkle line map; geometry computed internally only.
   geometry:
     width_percentile: 50
@@ -120,21 +225,32 @@ acne:
   enabled: false
   status: experimental
   blocked_on: commercial_open_lesion_level_labels
+  image_copy: color
+  primary_rois: [forehead, left_cheek, right_cheek, nose, chin]
   # Interface preserved so enabling later changes no app-facing code.
   detector:
     backend: null
     min_lesion_px: 12
     nms_iou: 0.4
+  aggregation:
+    method: max_with_support
+    min_rois_at_max: 2
+    demote_bands: 1
+    strong_single_roi:
+      min_lesion_burden: null      # calibrate before enabling
+      min_affected_area_ratio: null
   thresholds: {t0: 0.5, t1: 1.5, t2: 2.5}
 
 pores:
   enabled: false
   status: experimental
   blocked_on: commercial_open_native_resolution_pore_masks
+  image_copy: texture
+  primary_rois: [nose, left_cheek, right_cheek, forehead]
   tiling:
     tile_px: 256
     stride_px: 192
-    require_native_resolution: true
+    require_native_resolution: true   # never resize the face before pore analysis
   candidates:
     method: hessian_log
     min_px: 3

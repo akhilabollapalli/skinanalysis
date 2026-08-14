@@ -15,8 +15,9 @@ REPO = Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "LICENSES" / "asset_manifest.csv"
 
 REQUIRED_COLUMNS = {
-    "asset", "type", "source_url", "version_or_date", "license",
-    "layer_rights", "attribution_required", "allowed_purpose",
+    "asset", "type", "source_url", "model_card_url", "version_or_date", "version",
+    "license", "license_version", "layer_rights", "commercial_allowed",
+    "sha256", "download_date", "attribution_required", "allowed_purpose",
     "decision", "reviewed_on",
 }
 
@@ -70,6 +71,58 @@ def test_standing_exclusions_are_still_excluded() -> None:
             f"{asset} was changed to {by_asset[asset]['decision']}. "
             "Re-litigating a standing exclusion requires a documented licensing audit."
         )
+
+
+@pytest.mark.parametrize("row", _rows(), ids=lambda r: r["asset"])
+def test_decision_and_commercial_allowed_agree(row: dict[str, str]) -> None:
+    """`commercial_allowed` is the machine-checkable half of the licensing gate.
+
+    A row that says ELIGIBLE while commercial_allowed is anything but ``yes`` is either a
+    typo or a rationalisation. Both should fail the build.
+    """
+    eligible = row["decision"].startswith("ELIGIBLE")
+    allowed = row["commercial_allowed"].strip().lower()
+    if eligible:
+        assert allowed == "yes", (
+            f"{row['asset']}: decision is {row['decision']} but commercial_allowed={allowed!r}"
+        )
+    else:
+        assert allowed != "yes", (
+            f"{row['asset']}: EXCLUDED assets must not be marked commercially allowed"
+        )
+
+
+@pytest.mark.parametrize(
+    "row", [r for r in _rows() if r["type"] == "weights"], ids=lambda r: r["asset"]
+)
+def test_eligible_weights_cite_a_model_card(row: dict[str, str]) -> None:
+    """Weights are cleared by their model card, never by the code license (CLAUDE.md Rule 1).
+
+    The BiSeNet row in this manifest is the standing example of why: MIT code, restricted
+    weights. An eligible weights row without a model card URL has no evidence behind it.
+    """
+    if not row["decision"].startswith("ELIGIBLE"):
+        return
+    assert row["model_card_url"].startswith("http"), (
+        f"{row['asset']}: eligible weights must cite an authoritative model card"
+    )
+
+
+def test_no_unpinned_eligible_weights() -> None:
+    """Weight hashes and versions must be pinned before release.
+
+    An unpinned .task bundle means the audited artifact and the shipped artifact are not
+    provably the same file.
+    """
+    unpinned = [
+        f"{r['asset']}({field})"
+        for r in _rows()
+        if r["type"] == "weights" and r["decision"].startswith("ELIGIBLE")
+        for field in ("version", "sha256", "download_date")
+        if r[field].startswith("PIN_")
+    ]
+    if unpinned:
+        pytest.xfail(f"pin before release: {unpinned}")
 
 
 def test_no_unpinned_eligible_library() -> None:

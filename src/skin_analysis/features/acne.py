@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..schemas import ROI, Concern, FeatureResult, Severity
+from ..schemas import Concern, FeatureContext, FeatureResultInternal, ImageCopy, Severity
 
 CONCERN = Concern.ACNE
+IMAGE_COPY = ImageCopy.COLOR
 
 
 def analyze(
@@ -24,7 +25,9 @@ def analyze(
     skin_mask: np.ndarray,
     rois: dict[str, np.ndarray],
     config: dict,
-) -> FeatureResult:
+    *,
+    context: FeatureContext,
+) -> FeatureResultInternal:
     """Disabled in V1. Returns Severity.DISABLED without inspecting the image.
 
     The signature and schema are final so that enabling this concern later requires no
@@ -33,7 +36,7 @@ def analyze(
     Blocked on: commercial-open lesion-level labels
     """
     if not config.get("enabled", False):
-        return FeatureResult(
+        return FeatureResultInternal(
             concern=CONCERN,
             severity=Severity.DISABLED,
             regions=[],
