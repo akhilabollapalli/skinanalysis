@@ -1,0 +1,72 @@
+# Capture quality gate thresholds.
+#
+# The gate fails closed: any failure returns RETAKE and no concern logic runs.
+# These values are the product's main defense against the known weakness of V1's
+# classical CIELAB proxies, which partially measure the room's lighting rather than
+# the skin. Tighten these before loosening any feature threshold.
+#
+# Re-tune per target device cohort. Record any change with the validation run that
+# justified it.
+
+face:
+  # Minimum face bounding-box height as a fraction of image height.
+  # Below this there are not enough skin pixels for texture/wrinkle work.
+  min_face_height_frac: 0.35
+  # Minimum native pixels across the face box. Pore/fine-line work needs far more;
+  # those concerns are disabled in V1 partly for this reason.
+  min_face_px: 480
+  max_faces: 1
+
+pose:
+  # Absolute head rotation limits in degrees. Beyond these, ROI polygons stop
+  # corresponding to the same anatomy across scans, which destroys repeatability.
+  max_yaw_deg: 15.0
+  max_pitch_deg: 15.0
+  max_roll_deg: 10.0
+
+blur:
+  # Variance of Laplacian over the skin mask. Scale-dependent: recompute if the
+  # capture resolution target changes.
+  min_laplacian_var: 120.0
+  # Tenengrad/Sobel energy as a secondary check.
+  min_tenengrad: 60.0
+
+exposure:
+  # Mean luminance (0-255) over skin pixels.
+  min_mean_luma: 60.0
+  max_mean_luma: 200.0
+  # Fraction of skin pixels clipped at either end. Clipped pixels carry no
+  # measurable chroma information.
+  max_clipped_low_frac: 0.02
+  max_clipped_high_frac: 0.02
+  # Specular highlight coverage; high values usually mean flash or oily sheen.
+  max_specular_frac: 0.08
+
+shadow:
+  # Left/right mean-luminance difference as a fraction of overall mean.
+  # Side lighting is the single most common cause of false asymmetry findings.
+  max_lr_luma_asymmetry: 0.12
+  # Fraction of skin pixels in deep shadow, marked unmeasurable rather than analyzed.
+  max_deep_shadow_frac: 0.15
+
+white_balance:
+  # Gray-world deviation. Strong color casts invalidate a* / L* proxies.
+  max_gray_world_deviation: 0.18
+
+roi_visibility:
+  # Each ROI must retain this fraction of its polygon after skin masking to be scored.
+  min_visible_frac: 0.60
+  # ROIs that must be present for a scan to proceed at all.
+  required:
+    - forehead
+    - left_cheek
+    - right_cheek
+
+occlusion:
+  # Coverage fractions above which the ROI is marked unmeasurable.
+  max_hair_frac: 0.25
+  max_beard_frac: 0.30
+  max_glasses_frac: 0.20
+  # Heuristic flag only. Do not block the scan; warn and record for validation, since
+  # makeup and filters bias every classical color proxy.
+  warn_on_suspected_filter: true

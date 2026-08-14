@@ -1,0 +1,47 @@
+# Face images and any derived data must never be committed.
+data/
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.mp4
+!docs/**/*.png
+!tests/fixtures/synthetic_*.png
+
+# Model weights: nothing untracked may enter the repo (licensing gate).
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.h5
+*.pb
+weights/
+checkpoints/
+
+# Debug output
+debug_*.png
+*_overlay.png
+validation_runs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,72 @@
+# Anatomical ROI definitions as MediaPipe Face Landmarker indices.
+#
+# ROIs are landmark-defined polygons INTERSECTED with the skin mask -- landmarks alone
+# are never the mask (architecture doc §3.2).
+#
+# V1 has no learned face parser: CelebAMask-HQ is excluded by the licensing gate, which
+# excludes the BiSeNet weights trained on it. So these polygons are deliberately
+# CONSERVATIVE -- they sit inside the anatomy with margin, trading measurable area for
+# far fewer boundary false positives.
+#
+# Indices below are placeholders to be filled and visually verified with
+# `scripts/debug_roi.py` before any feature is calibrated.
+
+meta:
+  landmark_model: mediapipe_face_landmarker
+  landmark_count: 478          # 468 surface + 10 iris
+  verified: false              # set true only after visual inspection across poses
+
+# Shrink every polygon inward by this many pixels (scaled by face size) to keep
+# boundary pixels out of the measurement.
+erosion:
+  margin_frac_of_face_height: 0.010
+
+rois:
+  forehead:
+    landmarks: []
+    notes: "Highest hair-contamination risk. Verify with tied-back and loose hair."
+  left_cheek:
+    landmarks: []
+    notes: "Primary redness/pigmentation region. Must exclude nasolabial shadow."
+  right_cheek:
+    landmarks: []
+    notes: "Must mirror left_cheek in area or asymmetry findings are artifacts."
+  nose:
+    landmarks: []
+    notes: "Exclude nostrils and specular tip highlight."
+  left_crows_feet:
+    landmarks: []
+  right_crows_feet:
+    landmarks: []
+  left_under_eye:
+    landmarks: []
+    notes: "Exclude lash line and tear trough shadow."
+  right_under_eye:
+    landmarks: []
+  left_nasolabial:
+    landmarks: []
+    notes: "Fold shadow mimics both a wrinkle and a dark spot. Handle explicitly."
+  right_nasolabial:
+    landmarks: []
+  chin:
+    landmarks: []
+    notes: "Highest beard-contamination risk."
+
+# Always excluded, regardless of ROI membership.
+exclusions:
+  eyes: true
+  eyebrows: true
+  lips: true
+  nostrils: true
+  hair: true
+  beard: true
+  glasses: true
+  specular_highlights: true
+  deep_shadow: true
+
+# Symmetry pairs, checked for equal post-mask area before any asymmetry is reported.
+symmetry_pairs:
+  - [left_cheek, right_cheek]
+  - [left_crows_feet, right_crows_feet]
+  - [left_under_eye, right_under_eye]
+  - [left_nasolabial, right_nasolabial]
