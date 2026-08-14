@@ -105,9 +105,55 @@ def test_opencv_build_has_nonfree_disabled() -> None:
     assert line.split(":")[1].strip().upper() == "NO", f"non-free OpenCV build: {line.strip()}"
 
 
+def test_no_model_weights_are_tracked_by_git() -> None:
+    """Weights are never vendored, even when their licence is clear (CLAUDE.md Rule 1).
+
+    This test exists because the .gitignore pattern that was supposed to stop it had a
+    trailing inline comment. .gitignore has no inline comments, so the pattern became
+    ``*.task            # ...`` and matched nothing, and a 3.6 MB bundle was committed.
+    Checking the ignore rules would have missed it; checking what git actually tracks does
+    not.
+    """
+    import subprocess
+
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=False
+    )
+    if tracked.returncode != 0:
+        pytest.skip("not a git checkout")
+
+    suffixes = (".task", ".tflite", ".pt", ".pth", ".onnx", ".pb", ".h5", ".safetensors")
+    offenders = [
+        line for line in tracked.stdout.splitlines()
+        if line.strip().lower().endswith(suffixes)
+    ]
+    assert not offenders, (
+        f"model weights tracked in git: {offenders}. Weights are downloaded and verified "
+        "by hash at runtime, never committed."
+    )
+
+
+def test_gitignore_has_no_inline_comments() -> None:
+    """An inline comment silently becomes part of the pattern, disabling the rule.
+
+    The failure is invisible: the line still looks like an ignore rule.
+    """
+    offenders = []
+    for number, raw in enumerate((REPO / ".gitignore").read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.rstrip()
+        if not line or line.lstrip().startswith("#"):
+            continue
+        if " #" in line or "\t#" in line:
+            offenders.append(f"{number}: {line}")
+    assert not offenders, (
+        f".gitignore lines with inline comments (these do not work): {offenders}"
+    )
+
+
 def test_mediapipe_is_importable_and_apache_licensed() -> None:
     """D3 cleared the Face Landmarker; this checks the installed artifact agrees."""
     pytest.importorskip("mediapipe")
     metadata = md.metadata("mediapipe")
     classifiers = " ".join(metadata.get_all("Classifier") or [])
-    assert "Apache" in (metadata.get("License") or "") or "Apache" in classifiers
+    declared = str(metadata["License"] or "") if "License" in metadata else ""
+    assert "Apache" in declared or "Apache" in classifiers
