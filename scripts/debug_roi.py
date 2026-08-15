@@ -35,11 +35,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from skin_analysis.face import landmarks as lm  # noqa: E402
-from skin_analysis.face import rois as roi_mod  # noqa: E402
+import skin_analysis.face.landmarks as lm  # noqa: E402
+import skin_analysis.face.rois as roi_mod  # noqa: E402
+import skin_analysis.util.config as cfg  # noqa: E402
+import skin_analysis.util.scale as scale  # noqa: E402
 from skin_analysis.schemas import RunMode  # noqa: E402
-from skin_analysis.util import config as cfg  # noqa: E402
-from skin_analysis.util import scale  # noqa: E402
 
 #: Overlay modes, deliberately separable so each stage can be judged on its own.
 MODES = (
@@ -198,7 +198,7 @@ def render(image: np.ndarray, mode: str, roi: str | None, show_anchor: bool) -> 
 
     skin: np.ndarray | None = None
     try:
-        from skin_analysis.face import skin_mask
+        import skin_analysis.face.skin_mask as skin_mask
 
         skin = skin_mask.build(image, geometry.landmarks, roi_config)
     except NotImplementedError:

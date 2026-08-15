@@ -32,5 +32,8 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
 python_version = "3.10"
+# scripts/ live outside the package and add src/ to sys.path at runtime; mypy needs the
+# same root or it cannot resolve `from skin_analysis.face import landmarks`.
+mypy_path = "src"
 warn_return_any = true
 ignore_missing_imports = true
