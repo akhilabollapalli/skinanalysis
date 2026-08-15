@@ -55,6 +55,8 @@ erosion:
   # which trips the undersized floor and makes them permanently UNMEASURABLE. These are
   # narrow by anatomy, not by mistake, so they get a smaller margin rather than a waiver.
   per_roi_margin_frac_of_iod:
+    left_crows_feet: 0.020
+    right_crows_feet: 0.020
     left_under_eye: 0.018
     right_under_eye: 0.018
     left_nasolabial: 0.018
@@ -198,6 +200,27 @@ symmetry_pairs:
   - [left_under_eye, right_under_eye]
   - [left_nasolabial, right_nasolabial]
 
-# Minimum area a polygon must retain after erosion to be scored at all. An eroded ROI that
-# collapses to a sliver produces noise, not a measurement.
-min_area_frac_of_iod2: 0.02
+# Minimum measurable area, per ROI, in units of anchor^2.
+#
+# PER ROI, not global. A single value was tried and is meaningless here: measured over the
+# 48-face corpus the ROIs span two orders of magnitude, from crow's feet at 0.020 anchor^2
+# to forehead at 0.975. Against one 0.02 floor the forehead sat at 22x headroom while the
+# crow's-feet POLYGON was already below the floor before any masking -- so that ROI could
+# never be scored, on any face, for reasons that had nothing to do with the capture.
+#
+# Each value is roughly a third of that ROI's typical polygon area, so the floor still
+# catches genuine collapse while respecting that these regions are different sizes by
+# anatomy.
+min_area_frac_of_iod2:
+  default: 0.02
+  forehead: 0.100
+  left_cheek: 0.045
+  right_cheek: 0.045
+  nose: 0.035
+  chin: 0.040
+  left_nasolabial: 0.020
+  right_nasolabial: 0.020
+  left_under_eye: 0.008
+  right_under_eye: 0.008
+  left_crows_feet: 0.006
+  right_crows_feet: 0.006

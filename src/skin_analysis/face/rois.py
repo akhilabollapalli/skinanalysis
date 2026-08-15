@@ -274,10 +274,22 @@ def undersized(
     look like a measurement rather than like noise. Such ROIs must be reported
     UNMEASURABLE rather than scored (D7).
 
-    The floor is a fraction of anchor^2 so it means the same thing at any capture scale.
+    The floor is per ROI and expressed in anchor^2, so it means the same thing at any
+    capture scale AND respects that these regions differ in size by an order of magnitude.
+    A single global floor put the crow's-feet polygon below the threshold before any
+    masking, making that ROI unscoreable on every face.
     """
-    floor_px = float(config.get("min_area_frac_of_iod2", 0.0)) * anchor_px**2
-    return sorted(name for name, mask in roi_masks.items() if float(mask.sum()) < floor_px)
+    floors = config.get("min_area_frac_of_iod2", {})
+    if not isinstance(floors, dict):  # legacy scalar form
+        floors = {"default": floors}
+    default = float(floors.get("default", 0.0))
+
+    undersized_rois = []
+    for name, mask in roi_masks.items():
+        floor_px = float(floors.get(name, default)) * anchor_px**2
+        if float(mask.sum()) < floor_px:
+            undersized_rois.append(name)
+    return sorted(undersized_rois)
 
 
 def compose(
