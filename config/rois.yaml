@@ -50,6 +50,15 @@ meta:
 # windows scale differently under the same head tilt.
 erosion:
   margin_frac_of_iod: 0.045
+  # Thin bands lose proportionally far more area to a fixed margin than compact regions
+  # do. On real faces the default margin left under-eye and nasolabial at ~28% coverage,
+  # which trips the undersized floor and makes them permanently UNMEASURABLE. These are
+  # narrow by anatomy, not by mistake, so they get a smaller margin rather than a waiver.
+  per_roi_margin_frac_of_iod:
+    left_under_eye: 0.018
+    right_under_eye: 0.018
+    left_nasolabial: 0.018
+    right_nasolabial: 0.018
 
 # Anchors reused by the derived constructions below. Named here so the constructions read
 # as anatomy rather than as index arithmetic.
@@ -111,7 +120,7 @@ rois:
     type: derived
     construction: band_between
     anchors: [left_alar, left_mouth_corner]
-    width_frac_of_iod: 0.16
+    width_frac_of_iod: 0.22
     notes: >
       Wrinkle-only (D8). The fold's cast shadow reads as a dark spot AND a ridge, and
       erythema genuinely pools here, so it is excluded from pigmentation, redness severity,
@@ -121,38 +130,43 @@ rois:
     type: derived
     construction: band_between
     anchors: [right_alar, right_mouth_corner]
-    width_frac_of_iod: 0.16
+    width_frac_of_iod: 0.22
 
   # ---------------------------------------------------------------- direct polygons
 
+  # Index sets below were derived EMPIRICALLY: landmarks were projected on 12 real faces
+  # and the indices falling inside each anatomical region on ALL of them were kept. Hand-
+  # picked rings were tried first and were wrong -- see the hull note in face/rois.py.
+  # Order is irrelevant; every polygon is closed with a convex hull.
   left_cheek:
     type: polygon
-    landmarks: [345, 346, 347, 348, 349, 350, 277, 329, 371, 266, 425, 411, 352, 280, 330]
+    landmarks: [266, 280, 329, 330, 346, 347, 348, 349, 411, 425, 426, 427]
     notes: "Primary redness/pigmentation region. Must exclude the nasolabial shadow."
 
   right_cheek:
     type: polygon
-    landmarks: [116, 117, 118, 119, 120, 121, 47, 100, 142, 36, 205, 187, 123, 50, 101]
+    landmarks: [36, 50, 100, 101, 117, 118, 119, 120, 187, 203, 205, 206, 207]
     notes: "Must mirror left_cheek in area or asymmetry findings are artifacts."
 
   nose:
     type: polygon
-    landmarks: [168, 193, 245, 128, 114, 217, 198, 209, 49, 64, 98, 2, 327, 294, 279, 429,
-                420, 437, 343, 357, 465, 417]
+    landmarks: [1, 4, 5, 6, 45, 44, 51, 195, 197, 196, 174, 188, 122, 114, 128, 245, 168,
+                417, 351, 419, 399, 412, 343, 357, 465, 3]
     notes: "Excludes nostrils and the specular tip highlight via the skin mask."
 
   left_under_eye:
     type: polygon
-    landmarks: [463, 341, 256, 252, 253, 254, 339, 255, 261, 448, 449, 450, 451, 452]
+    landmarks: [252, 253, 254, 256, 261, 339, 341, 448, 449, 450, 451, 452, 453]
     notes: "Excludes the lash line and the tear-trough shadow."
 
   right_under_eye:
     type: polygon
-    landmarks: [243, 112, 26, 22, 23, 24, 110, 25, 31, 228, 229, 230, 231, 232]
+    landmarks: [22, 23, 24, 25, 26, 110, 112, 228, 229, 230, 231, 232, 233]
 
   chin:
     type: polygon
-    landmarks: [201, 200, 421, 428, 199, 208, 171, 148, 152, 377, 396, 175, 394]
+    landmarks: [18, 32, 83, 140, 182, 194, 200, 201, 208, 262, 313, 369, 406, 418, 421,
+                424, 428, 431]
     notes: "Highest beard-contamination risk."
 
 # Always excluded, regardless of ROI membership.

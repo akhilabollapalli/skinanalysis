@@ -218,7 +218,8 @@ def build(
     assert_verified(config, run_mode)
 
     anchor_px = scale.inter_ocular_distance(landmarks)
-    margin_px = scale.to_px(config["erosion"]["margin_frac_of_iod"], anchor_px, minimum=0)
+    erosion = config["erosion"]
+    per_roi = erosion.get("per_roi_margin_frac_of_iod", {}) or {}
 
     excluded = _exclusion_mask(landmarks, image_shape, config)
 
@@ -226,7 +227,11 @@ def build(
     for name, spec in config["rois"].items():
         kind = spec.get("type", "polygon")
         if kind == "polygon":
-            ring = _pts(landmarks, spec["landmarks"])
+            # Hulled, not used in listed order. A hand-ordered ring of mesh indices is
+            # easy to get wrong, and a self-intersecting polygon does not fail loudly --
+            # it rasterizes into a thin arc that still looks like a region in an overlay.
+            # That is exactly how the first cheek definitions passed review.
+            ring = _convex_ring(_pts(landmarks, spec["landmarks"]))
         elif kind == "derived":
             construction = _CONSTRUCTIONS.get(spec["construction"])
             if construction is None:
@@ -242,7 +247,8 @@ def build(
         # Excluded anatomy is subtracted BEFORE erosion, so the erosion margin also backs
         # the ROI away from the eye and lip boundaries rather than only from its own edge.
         mask &= ~excluded
-        built[name] = _erode(mask, margin_px)
+        margin_frac = per_roi.get(name, erosion["margin_frac_of_iod"])
+        built[name] = _erode(mask, scale.to_px(margin_frac, anchor_px, minimum=0))
 
     return built
 

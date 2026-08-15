@@ -49,9 +49,15 @@ def test_render_reports_when_no_face_is_found() -> None:
     assert out.shape[:2] == (480, 480), "no-face path must not tile empty panels"
 
 
-def test_render_tolerates_missing_skin_mask() -> None:
-    """B4 has not landed. Polygons must still be reviewable without it (B3 before B4)."""
-    from skin_analysis.face import skin_mask
+def test_render_degrades_when_the_mask_cannot_be_built() -> None:
+    """A face the mask cannot characterise must not blank the overlay: the polygons are
+    still reviewable, which is the whole B3-before-B4 ordering."""
+    import skin_analysis.face.skin_mask as skin_mask
 
-    with pytest.raises(NotImplementedError):
-        skin_mask.build(np.zeros((10, 10, 3), np.uint8), np.zeros((478, 3)), {})
+    landmarks = np.zeros((478, 3))
+    landmarks[468, :2] = (100.0, 50.0)
+    landmarks[473, :2] = (140.0, 50.0)
+    mask = skin_mask.build(
+        np.zeros((120, 240, 3), np.uint8), landmarks, cfg.load("rois")
+    )
+    assert mask.shape == (120, 240) and not mask.any(), "degenerate input must fail closed"

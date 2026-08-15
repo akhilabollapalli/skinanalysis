@@ -1,0 +1,133 @@
+# Skin mask construction.
+#
+# This is the weakest link in the commercial-open V1 and the first place to look when a
+# feature produces false positives. CelebAMask-HQ is excluded by the licensing gate, which
+# excludes every BiSeNet face-parsing weight trained on it, so V1 has NO learned parser.
+#
+# ---------------------------------------------------------------------------------------
+# NO ABSOLUTE SKIN-COLOUR RANGE
+#
+# The textbook classical approach -- a fixed RGB/HSV/YCrCb "skin colour" box -- is exactly
+# the technique that fails on dark skin, and it fails silently: the mask simply shrinks,
+# the ROI coverage drops, and the concern quietly reports UNMEASURABLE or scores a smaller
+# region. Nothing looks broken. CLAUDE.md §5 is explicit that a model which works on
+# average and fails on one skin tone is a failed model.
+#
+# So the mask is SUBJECT-ADAPTIVE. It samples this face's own skin at landmark-stable
+# points, builds a robust reference in CIELAB, and classifies every pixel relative to that
+# reference. The same reasoning as D1 stage A: ask "does this pixel differ from THIS
+# person's skin", never "does this pixel look like skin in general".
+#
+# Consequence: every threshold below is a MULTIPLE OF THE SUBJECT'S OWN MAD, not an
+# absolute colour value. There is deliberately no RGB constant anywhere in this file.
+# ---------------------------------------------------------------------------------------
+#
+# When a first-party or commercially clear parser becomes available, replacing this module
+# is the highest-value upgrade in the pipeline.
+
+meta:
+  schema_version: 1
+  strategy: subject_adaptive_cielab
+
+# Reference sampling: where this subject's "normal skin" statistics come from.
+reference:
+  # Sampled from ROI POLYGONS, not from hand-picked landmark indices.
+  #
+  # Hand-picking indices was tried and failed on real faces: index 9 landed on hair
+  # (L*=6) and index 152 sat on the chin SILHOUETTE, i.e. on background (L*=10). The
+  # reference MAD blew up to 37 on a 0-100 scale, every +/-3.5 MAD gate then accepted
+  # everything, and the mask silently degenerated into the whole face oval with nothing
+  # rejected. It looked like a working mask.
+  #
+  # The ROI polygons are already eroded inward and already exclude eyes, brows and lips,
+  # so they cannot land on those features by construction. Using them also makes the
+  # reference come from the same regions the features will later measure.
+  patch_rois:
+    - left_cheek
+    - right_cheek
+    - forehead
+  # Patches whose median L* deviates from the cross-patch median by more than this many
+  # MADs are discarded before the reference is computed. A patch that lands on a beard, a
+  # cast shadow, or a specular hotspot would otherwise redefine "normal skin" for the whole
+  # face, and every downstream rejection would inherit the error.
+  patch_outlier_mads: 3.0
+  min_valid_patches: 2
+  # Below this the reference is not trustworthy and the mask fails closed to empty rather
+  # than guessing.
+  min_reference_pixels: 200
+
+# Pixel classification, all in multiples of the subject's own robust scale.
+classify:
+  max_lightness_mads: 3.5      # |L* - ref| beyond this is not this person's skin
+  max_chroma_mads: 3.5         # distance in the (a*, b*) plane
+  # Chroma MAD collapses toward zero on even skin, which makes the chroma gate so strict
+  # it rejects the whole face. Floored as a fraction of the subject's ABSOLUTE skin chroma
+  # (hypot of median a*, b*), not of the lightness MAD.
+  #
+  # Flooring against l_mad was tried and failed: it is estimated on the small reference
+  # ROIs but applied across the whole face, where shading produces much larger chroma
+  # variation. On a phantom sweep the mask collapsed to 0.1% coverage at two skin tones
+  # while every rejection stage read ~0 -- the loss was entirely in the classifier, which
+  # is the silent tone-dependent failure this module exists to avoid.
+  min_chroma_mad_frac_of_skin_chroma: 0.12
+
+# Specular highlights carry no measurable chroma: the sensor has clipped toward the
+# illuminant, not toward the skin.
+specular:
+  min_lightness_mads: 2.5      # much brighter than reference
+  # ...and washed out, measured as ABSOLUTE chroma relative to this subject's own skin
+  # chroma. Distance-from-skin-chroma was tried first and was backwards: a blown highlight
+  # is neutral (a*=b*=0) while skin sits at strongly positive a*/b*, so a real highlight is
+  # MAXIMALLY far from skin chroma and the gate rejected every one of them. Specular
+  # rejection was silently dead on all 14 corpus faces.
+  max_chroma_frac_of_skin: 0.45
+  dilate_frac_of_iod: 0.012    # highlights bleed; back away from their edges
+
+# Deep shadow. Not "dark skin" -- darkness RELATIVE TO THIS SUBJECT, which is what makes
+# the test tone-independent.
+shadow:
+  max_lightness_mads: -3.0
+
+# Hair and beard are both darker than surrounding skin AND high-frequency. Requiring BOTH
+# is what keeps the test off dark skin, which is dark but smooth.
+hair:
+  enabled: true
+  max_lightness_mads: -1.5
+  min_texture_energy_mads: 2.0
+  texture_window_frac_of_iod: 0.05
+  dilate_frac_of_iod: 0.02     # stray strands extend past the detected mass
+
+beard:
+  enabled: true
+  # Same signature as hair, applied only below the nose. Stubble is lower-contrast than
+  # scalp hair, so the lightness gate is looser and the texture gate carries more weight.
+  max_lightness_mads: -1.0
+  min_texture_energy_mads: 1.5
+  texture_window_frac_of_iod: 0.035
+  dilate_frac_of_iod: 0.012
+
+glasses:
+  # Frames are strong, long, near-horizontal dark edges crossing the eye region. Lenses
+  # additionally distort what is behind them, so the whole eye band is dropped when frames
+  # are detected rather than trying to keep the parts that look fine.
+  enabled: true
+  min_edge_strength_mads: 3.0
+  min_edge_length_frac_of_iod: 0.55
+  band_pad_frac_of_iod: 0.10
+
+# Geometric exclusions dilated outward, since landmark rings sit ON the boundary of the
+# feature rather than outside it.
+geometric:
+  eye_dilate_frac_of_iod: 0.05
+  brow_dilate_frac_of_iod: 0.05
+  lip_dilate_frac_of_iod: 0.05
+  nostril_dilate_frac_of_iod: 0.04
+
+# Cleanup. Removes speckle without reshaping the mask.
+morphology:
+  open_frac_of_iod: 0.012
+  close_frac_of_iod: 0.012
+  keep_largest_component: true
+  # A mask that survives cleanup but covers almost nothing means the classifier failed,
+  # not that the face is tiny. Fail closed instead of returning a plausible sliver.
+  min_mask_frac_of_face: 0.15

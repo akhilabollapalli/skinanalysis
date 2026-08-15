@@ -71,7 +71,6 @@ def test_every_schema_roi_has_a_config_entry(roi_config: dict) -> None:
 # handedness and anchor-proportional scaling as well.
 
 
-@pytest.mark.xfail(reason="face.skin_mask.build not implemented yet", strict=True)
 def test_skin_mask_does_not_include_background() -> None:
     """The mask is the weakest link in commercial-open V1; background leakage is the
     failure that most often looks like a real skin finding."""
