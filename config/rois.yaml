@@ -100,9 +100,9 @@ rois:
     construction: lateral_patch
     anchors: [left_eye_outer]
     direction: lateral            # away from the face midline
-    offset_frac_of_iod: 0.10      # clear of the lash line
-    width_frac_of_iod: 0.26
-    height_frac_of_iod: 0.30
+    offset_frac_of_iod: 0.06      # clear of the lash line
+    width_frac_of_iod: 0.20       # 0.26 ran off the face oval at the temple
+    height_frac_of_iod: 0.26
     clip_to: face_oval
     notes: "No landmarks exist lateral to the outer eye corner. Constructed."
 
@@ -111,9 +111,9 @@ rois:
     construction: lateral_patch
     anchors: [right_eye_outer]
     direction: lateral
-    offset_frac_of_iod: 0.10
-    width_frac_of_iod: 0.26
-    height_frac_of_iod: 0.30
+    offset_frac_of_iod: 0.06
+    width_frac_of_iod: 0.20
+    height_frac_of_iod: 0.26
     clip_to: face_oval
 
   left_nasolabial:

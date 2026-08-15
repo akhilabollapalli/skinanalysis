@@ -118,7 +118,10 @@ glasses:
 # Geometric exclusions dilated outward, since landmark rings sit ON the boundary of the
 # feature rather than outside it.
 geometric:
-  eye_dilate_frac_of_iod: 0.05
+  # The under-eye ROI sits directly below the eye, so this dilation eats it from above.
+  # At 0.05 it left under-eye undersized on 13 of 14 corpus faces. The lash line still
+  # needs clearing, so it is reduced rather than removed.
+  eye_dilate_frac_of_iod: 0.028
   brow_dilate_frac_of_iod: 0.05
   lip_dilate_frac_of_iod: 0.05
   nostril_dilate_frac_of_iod: 0.04
