@@ -51,7 +51,14 @@ capture_profiles:
     blur:
       # Computed on the canonical crop, so this number is device-comparable.
       min_laplacian_var: 120.0
-      # Tenengrad/Sobel energy as a secondary check.
+      # Tenengrad/Sobel energy as a secondary check, computed as mean(gx^2 + gy^2) on the
+      # canonical crop.
+      #
+      # MEASURED AND CURRENTLY DEAD: over the 48-image corpus the p05 was 446, so this
+      # cutoff never binds and `min_laplacian_var` is the only blur signal in effect. Left
+      # at 60 deliberately rather than raised to a plausible-looking number -- the value
+      # that makes it a real second opinion has to come from real-device captures, because
+      # a generative corpus has no lens and no defocus (see scripts/qc_report.py).
       min_tenengrad: 60.0
       # The pre-gate runs on the WHOLE FRAME, before a face box exists. It therefore needs
       # its OWN thresholds and may not reuse the two above: a frame is mostly background,

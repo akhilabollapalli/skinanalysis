@@ -107,9 +107,12 @@ def check(
     failures.extend(_check_blur(crop, config, metrics))
 
     skin = face.skin_mask
+    # Recorded unconditionally. A metric present only on the failure path makes every
+    # distribution over it a distribution over failures, which is how a validation summary
+    # ends up describing the opposite of what it appears to.
+    metrics["skin_px"] = float(np.count_nonzero(skin))
     if not skin.any():
         failures.append(QCFailure.OCCLUSION)
-        metrics["skin_px"] = 0.0
     else:
         failures.extend(_check_exposure(image, skin, config, metrics))
         failures.extend(_check_shadow(image, skin, config, metrics))
