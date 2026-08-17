@@ -85,13 +85,18 @@ capture_profiles:
       clip_low_level: 2.0
       clip_high_level: 253.0
       # Specular highlight coverage; high values usually mean flash or oily sheen.
+      #
+      # The coverage FRACTION is gated here, but it is measured by the skin mask, using that
+      # subject's own skin statistics (see `specular` in config/skin_mask.yaml). There are
+      # deliberately no absolute L*/chroma cutoffs in this file any more.
+      #
+      # There were, and they were wrong: L* > 85 AND chroma < 8, the signature of a blown
+      # highlight on LIGHT skin. Measured on 26 real captures of brown skin, the brightest
+      # 1% of skin pixels sat at L* 42-78 with chroma 18-43, so the check matched nothing
+      # and reported zero specular coverage while shine was clearly visible. An absolute
+      # cutoff on a tone-dependent quantity works on light skin and silently stops working
+      # on dark skin, which is the one failure mode this project treats as disqualifying.
       max_specular_frac: 0.08
-      # A specular highlight is bright AND washed out. ABSOLUTE chroma, not distance from
-      # skin chroma: a blown highlight is neutral (a* ~ b* ~ 0) while skin sits at strongly
-      # positive a*/b*, so it is MAXIMALLY far from skin chroma. Testing the distance
-      # inverts the check, which this project has already got wrong once.
-      specular_min_lightness: 85.0        # L*, 0..100
-      specular_max_chroma: 8.0            # hypot(a*, b*)
 
     shadow:
       # Left/right mean-luminance difference as a fraction of overall mean.

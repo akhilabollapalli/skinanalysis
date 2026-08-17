@@ -39,6 +39,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from skin_analysis import pipeline  # noqa: E402
 from skin_analysis.capture import qc  # noqa: E402
 from skin_analysis.face import landmarks as landmark_layer  # noqa: E402
 from skin_analysis.face import rois as roi_layer  # noqa: E402
@@ -92,7 +93,7 @@ def observe(image: np.ndarray, profile: dict, roi_config: dict) -> dict[str, Any
             roi_visibility=visibility,
             occlusion={
                 stage: float((diagnostics.get("rejected_frac_of_face", {}) or {}).get(stage, 0.0))
-                for stage in ("hair", "beard", "glasses")
+                for stage in pipeline._GATED_MASK_STAGES
             },
         ),
     )

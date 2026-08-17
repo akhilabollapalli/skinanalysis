@@ -56,6 +56,8 @@ class FaceObservation:
     #: ROI name -> surviving fraction of its polygon, from ``rois.measurable_fraction``.
     roi_visibility: dict[str, float] = field(default_factory=dict)
     #: Per-stage rejection fractions from ``skin_mask.build_with_diagnostics``.
+    #: Carries ``hair``, ``beard``, ``glasses`` AND ``specular`` -- see the note in
+    #: ``_check_exposure`` for why specular coverage is not recomputed here.
     occlusion: dict[str, float] = field(default_factory=dict)
     device_metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -114,7 +116,11 @@ def check(
     if not skin.any():
         failures.append(QCFailure.OCCLUSION)
     else:
-        failures.extend(_check_exposure(image, skin, config, metrics))
+        failures.extend(
+            _check_exposure(
+                image, skin, config, metrics, float(face.occlusion.get("specular", 0.0))
+            )
+        )
         failures.extend(_check_shadow(image, skin, config, metrics))
 
     failures.extend(_check_roi_visibility(config, face, metrics))
@@ -287,11 +293,27 @@ def _check_exposure(
     skin: np.ndarray,
     config: dict,
     metrics: dict[str, float],
+    specular_frac: float,
 ) -> list[QCFailure]:
     """Exposure over SKIN pixels, not the whole frame.
 
     A dark background would otherwise drag the mean down and reject a well-exposed face,
     and a blown background would do the reverse.
+
+    ``specular_frac`` comes from the SKIN MASK, which measures it relative to the subject's
+    own skin. It is not recomputed here, and that is the point.
+
+    An earlier version of this function tested absolute values -- L* above 85 and chroma
+    below 8, the signature of a blown highlight on light skin. Measured on 26 real captures
+    of brown skin, the brightest 1% of skin pixels sat at L* 42-78 with chroma 18-43, so the
+    gate matched NOTHING on any of them and specular coverage read identically zero while
+    shine was plainly visible on foreheads and noses. A shiny patch on brown skin is bright
+    RELATIVE TO THAT PERSON and still strongly pigmented; it never goes neutral.
+
+    That is an absolute threshold applied to a tone-dependent quantity, which is the silent
+    tone-dependent failure config/skin_mask.yaml exists to avoid, and it fails in the worst
+    direction: it works on light skin and quietly stops working on dark skin. One source of
+    truth, subject-relative, is the fix.
     """
     import cv2
 
@@ -320,15 +342,6 @@ def _check_exposure(
     ):
         failures.append(QCFailure.OVEREXPOSED)
 
-    # Specular coverage: bright AND washed out. Absolute chroma, not distance from skin
-    # chroma -- a blown highlight is neutral, so it sits FAR from skin chroma, not near it.
-    lab = color.bgr_to_lab(image)
-    chroma = color.chroma(lab)[skin]
-    lightness = lab[..., 0][skin]
-    specular_frac = _fraction(
-        (lightness > float(spec["specular_min_lightness"]))
-        & (chroma < float(spec["specular_max_chroma"]))
-    )
     metrics["specular_frac"] = specular_frac
     if specular_frac > float(spec["max_specular_frac"]):
         failures.append(QCFailure.OVEREXPOSED)

@@ -293,10 +293,16 @@ def _face_box(points: np.ndarray, shape: tuple[int, int]) -> tuple[int, int, int
     return x0, y0, max(0, x1 - x0), max(0, y1 - y0)
 
 
+#: Mask stages QC gates on. ``specular`` is included because QC must NOT recompute it: the
+#: mask measures it against the subject's own skin, and an absolute cutoff there was found
+#: to be silently dead on brown skin (see qc._check_exposure).
+_GATED_MASK_STAGES = ("hair", "beard", "glasses", "specular")
+
+
 def _occlusion_fractions(diagnostics: dict) -> dict[str, float]:
     """Per-stage rejection fractions, named as the occlusion config expects them."""
     rejected = diagnostics.get("rejected_frac_of_face", {}) or {}
-    return {stage: float(rejected.get(stage, 0.0)) for stage in ("hair", "beard", "glasses")}
+    return {stage: float(rejected.get(stage, 0.0)) for stage in _GATED_MASK_STAGES}
 
 
 def _run_concerns(

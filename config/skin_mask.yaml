@@ -74,13 +74,28 @@ classify:
 # Specular highlights carry no measurable chroma: the sensor has clipped toward the
 # illuminant, not toward the skin.
 specular:
-  min_lightness_mads: 2.5      # much brighter than reference
-  # ...and washed out, measured as ABSOLUTE chroma relative to this subject's own skin
-  # chroma. Distance-from-skin-chroma was tried first and was backwards: a blown highlight
-  # is neutral (a*=b*=0) while skin sits at strongly positive a*/b*, so a real highlight is
-  # MAXIMALLY far from skin chroma and the gate rejected every one of them. Specular
-  # rejection was silently dead on all 14 corpus faces.
-  max_chroma_frac_of_skin: 0.45
+  min_lightness_mads: 2.5      # much brighter than this subject's own reference
+  # ...and LESS SATURATED than this subject's own skin, where saturation is chroma / L*.
+  #
+  # Two earlier versions of this were wrong, in the same direction, and both were silently
+  # dead rather than noisy:
+  #
+  #   1. Distance FROM skin chroma. Backwards -- a neutral highlight is MAXIMALLY far from
+  #      strongly-chromatic skin, so the gate rejected every real highlight.
+  #   2. ABSOLUTE chroma below 0.45x skin chroma. This assumes a highlight goes neutral,
+  #      which only happens at true sensor clipping. A moderate oily sheen adds the
+  #      illuminant on top of the diffuse skin colour, so L* and chroma rise TOGETHER.
+  #      Measured on 26 real captures of brown skin, the brightest 1% of skin pixels had
+  #      chroma at 0.88x-1.58x skin chroma -- ALWAYS above the 0.45x ceiling. Dead stage.
+  #
+  # Saturation is what actually falls, because L* rises faster than chroma: those same
+  # pixels sat at 0.64x-0.78x the skin's own chroma/L* ratio.
+  #
+  # THRESHOLD NOT YET TUNED. 0.85 is set to catch the 0.64-0.78 range with margin, from 8
+  # measured faces of ONE tone family, on WhatsApp-recompressed images -- and compression
+  # flattens exactly the highlights being measured. Needs camera originals across a real
+  # tone range before it can be trusted (B8).
+  max_saturation_frac_of_skin: 0.85
   dilate_frac_of_iod: 0.012    # highlights bleed; back away from their edges
 
 # Deep shadow. Not "dark skin" -- darkness RELATIVE TO THIS SUBJECT, which is what makes

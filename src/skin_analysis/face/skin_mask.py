@@ -255,20 +255,41 @@ def build_reference(
 
 def _specular(lab: np.ndarray, ref: SkinReference, anchor_px: float,
               config: dict) -> np.ndarray:
-    """Clipped toward the illuminant, not toward the skin: bright AND washed out."""
+    """Brighter than this subject's skin AND less saturated than it.
+
+    SATURATION (chroma / L*), not absolute chroma. The distinction is not cosmetic and it
+    took real captures to see:
+
+    Testing absolute chroma against a fraction of skin chroma assumes a highlight goes
+    NEUTRAL. That only happens at true sensor clipping. A moderate oily sheen adds the
+    illuminant's light on top of the diffuse skin colour, so L* and chroma rise TOGETHER and
+    absolute chroma ends up HIGHER than average skin, not lower. Measured over 26 real
+    captures of brown skin, the brightest 1% of skin pixels had chroma at 0.88x-1.58x the
+    subject's skin chroma -- always above -- against a rule requiring below 0.45x. The stage
+    was structurally dead: it could not fire on any of them, at any threshold in that
+    direction.
+
+    What does drop is saturation, because L* rises faster than chroma: the same pixels sat
+    at 0.64-0.78 of the skin's own chroma/L* ratio. That is the signature to test.
+
+    Note the direction of the old failure. Absolute chroma cutoffs work on light skin, where
+    a highlight really does clip toward white, and quietly stop working as skin gets darker.
+    """
     spec = config["specular"]
     if ref.l_mad <= 0:
         return np.zeros(lab.shape[:2], dtype=bool)
-    lightness_z = (lab[..., 0] - ref.l_median) / ref.l_mad
-    # ABSOLUTE chroma, compared against this subject's own skin chroma. Using distance
-    # from the skin chroma instead is backwards: a blown highlight is neutral, so it sits
-    # far from skin chroma, not near it.
-    chroma_abs = np.hypot(lab[..., 1], lab[..., 2])
+
     skin_chroma = float(np.hypot(ref.a_median, ref.b_median))
-    if skin_chroma <= 1e-6:
+    if skin_chroma <= 1e-6 or ref.l_median <= 1e-6:
         return np.zeros(lab.shape[:2], dtype=bool)
+
+    lightness = lab[..., 0]
+    lightness_z = (lightness - ref.l_median) / ref.l_mad
+    saturation = np.hypot(lab[..., 1], lab[..., 2]) / np.maximum(lightness, 1e-6)
+    skin_saturation = skin_chroma / ref.l_median
+
     hit = (lightness_z > spec["min_lightness_mads"]) & (
-        chroma_abs < spec["max_chroma_frac_of_skin"] * skin_chroma
+        saturation < spec["max_saturation_frac_of_skin"] * skin_saturation
     )
     return _dilate(hit, scale.to_px(spec["dilate_frac_of_iod"], anchor_px, minimum=0))
 
