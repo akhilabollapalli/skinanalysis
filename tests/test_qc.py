@@ -33,6 +33,35 @@ def test_canonical_crop_is_defined(capture_config: dict) -> None:
     assert capture_config["canonical"]["qc_face_width_px"] > 0
 
 
+def test_native_face_floor_is_at_least_the_canonical_width(capture_config: dict) -> None:
+    """Otherwise canonical normalisation silently does not happen.
+
+    A face between the two floors clears the size gate, but ``canonical_crop`` refuses to
+    upsample it -- correctly, since measurements must trace back to real sensor pixels. Its
+    blur is then measured on a narrower crop than the threshold was set on. Found on a real
+    2316x3088 capture whose subject stood a bit further back: a 617px face box scored
+    against a cutoff calibrated for 768px.
+    """
+    assert (
+        capture_config["face"]["min_face_px"]
+        >= capture_config["canonical"]["qc_face_width_px"]
+    )
+
+
+def test_canonical_crop_never_upsamples(capture_config: dict) -> None:
+    """Upsampling would measure the interpolator, not the skin (CLAUDE.md §6)."""
+    small = np.full((300, 240, 3), 128, dtype=np.uint8)
+    crop = qc.canonical_crop(small, (0, 0, 240, 300), capture_config)
+    assert crop.shape[1] <= 240
+
+
+def test_canonical_crop_downsamples_to_target(capture_config: dict) -> None:
+    target = capture_config["canonical"]["qc_face_width_px"]
+    big = np.full((2000, 1600, 3), 128, dtype=np.uint8)
+    crop = qc.canonical_crop(big, (0, 0, 1600, 2000), capture_config)
+    assert crop.shape[1] == target
+
+
 def test_unknown_device_falls_back_to_default(capture_config: dict) -> None:
     """An unrecognised phone is the expected case in V1, not an error."""
     assert cfg.capture_profile("some-unreleased-phone") == capture_config

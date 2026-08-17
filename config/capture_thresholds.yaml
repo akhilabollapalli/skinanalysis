@@ -38,7 +38,14 @@ capture_profiles:
       # Minimum NATIVE pixels across the face box, checked before canonical resampling.
       # Downsampling to the canonical crop is legitimate; upsampling to reach it is not,
       # because measurements must trace back to real sensor pixels.
-      min_face_px: 480
+      #
+      # MUST BE >= canonical.qc_face_width_px, and it is enforced in code. It was 480
+      # against a canonical width of 768, which meant a face between the two passed the
+      # size gate, then could not be resampled UP to canonical -- so its blur was measured
+      # on a 617px crop against a threshold calibrated for 768px, and the whole point of
+      # D11 (normalise scale BEFORE measuring) quietly did not happen for that capture.
+      # Caught on a real 2316x3088 original whose subject simply stood further away.
+      min_face_px: 768
       max_faces: 1
 
     pose:

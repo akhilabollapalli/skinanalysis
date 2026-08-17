@@ -233,9 +233,25 @@ def _check_face_geometry(
     metrics["face_height_frac"] = float(height_frac)
     metrics["face_px"] = float(max(box_w, box_h))
 
+    # The native floor may not sit below the canonical width. Between the two, the face
+    # clears the size gate but cannot be resampled UP to canonical -- upsampling would
+    # invent pixels -- so every scale-sensitive metric would then be measured on a crop
+    # narrower than the one its threshold was set on. D11 exists to stop exactly that.
+    canonical_width = int(config["canonical"]["qc_face_width_px"])
+    min_face_px = int(spec["min_face_px"])
+    if min_face_px < canonical_width:
+        raise ValueError(
+            f"face.min_face_px ({min_face_px}) is below canonical.qc_face_width_px "
+            f"({canonical_width}). Captures between the two would skip canonical "
+            "normalisation silently, which defeats D11."
+        )
+
     if height_frac < float(spec["min_face_height_frac"]):
         failures.append(QCFailure.FACE_TOO_SMALL)
-    if max(box_w, box_h) < int(spec["min_face_px"]):
+    if box_w < min_face_px:
+        # Width, not max(w, h): the canonical crop normalises on WIDTH, so width is what
+        # has to clear the floor. A tall narrow box passing on its height would land back
+        # in the sub-canonical case this check exists to prevent.
         failures.append(QCFailure.FACE_TOO_SMALL)
 
     pose = config["pose"]
