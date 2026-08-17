@@ -89,7 +89,27 @@ rois:
     # short of the mesh's top edge because that edge follows the hairline inconsistently
     # across hairstyles -- and this is already the highest hair-contamination ROI.
     anchors: [right_brow, left_brow]
-    extrude_frac_of_iod: 0.60
+    # 0.60 was too tall, measured on 29 unique real captures. The top of that polygon
+    # landed on hair on every subject and was rejected by the mask, so it contributed NO
+    # measurable skin -- it only inflated the denominator of the visibility ratio and made
+    # the roi_visibility gate close on 45 of 50 captures.
+    #
+    #   extrude   visible p50   pass >= 0.60   measurable area (floor 0.100)
+    #     0.60       0.404          3/29            0.395
+    #     0.50       0.473          8/29            0.387
+    #     0.42       0.549         11/29            0.386
+    #     0.35       0.647         19/29            0.382   <- chosen
+    #     0.30       0.740         21/29            0.377
+    #
+    # Note the last column: shrinking from 0.60 to 0.35 gives up 3% of the area actually
+    # MEASURED while more than tripling the pass rate. That is the signature of a region
+    # that was reaching into hair rather than skin.
+    #
+    # 0.35 rather than 0.30 because the area floor is not the binding constraint here (3.8x
+    # headroom either way) and a taller forehead still samples more of the region a user
+    # would call their forehead. Tune further only against a corpus with varied hairlines --
+    # all 29 captures here are 4 subjects from one family.
+    extrude_frac_of_iod: 0.35
     brow_clearance_frac_of_iod: 0.18   # start above the brow, not on it
     clip_to: face_oval
     notes: >
