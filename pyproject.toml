@@ -37,3 +37,13 @@ python_version = "3.10"
 mypy_path = "src"
 warn_return_any = true
 ignore_missing_imports = true
+
+# Do not follow into third-party source. `python_version` above is our floor (3.10), but
+# installed packages are free to use newer syntax -- scikit-image pulls in tifffile, which
+# uses 3.12 `type` statements, and mypy reports that as a syntax error and then stops
+# checking OUR code entirely. These libraries ship no usable annotations for our purposes
+# anyway; the wrappers around them are what we typecheck.
+[[tool.mypy.overrides]]
+module = ["cv2.*", "mediapipe.*", "skimage.*", "tifffile.*", "scipy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

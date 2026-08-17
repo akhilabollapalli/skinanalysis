@@ -9,24 +9,433 @@ features are CIELAB proxies, so they partially measure the room's lighting. QC s
 -- not feature sophistication -- is what makes those measurements trustworthy.
 
 Thresholds: config/capture_thresholds.yaml.
+
+TWO PHASES, because the checks need different inputs:
+
+    precheck(image, config)              image alone -- blur, exposure, colour cast
+    check(image, config, face=...)       everything, given a FaceObservation
+
+``check`` with ``face=None`` fails with NO_FACE. That is not a special case to work
+around; a frame with no detectable face has nothing to measure. Landmark detection loads a
+model from disk, so it stays in the pipeline and out of this module -- which keeps every
+function here pure and lets CI exercise the gate without the model bundle present.
+
+D11: every scale-sensitive metric is computed on the CANONICAL FACE CROP, not the raw
+upload. Normalising scale before measuring is what makes one `default` profile comparable
+across devices, instead of maintaining a phone cohort nobody has validated.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import Any
+
 import numpy as np
 
-from ..schemas import CaptureQC
+from ..schemas import CaptureQC, QCFailure
+from ..util import color
 
 
-def check(image: np.ndarray, config: dict) -> CaptureQC:
+@dataclass(frozen=True)
+class FaceObservation:
+    """What the face layer knows about a capture, handed to QC as plain data.
+
+    Kept deliberately small and inert. QC must not reach back into the face layer: if it
+    could, a QC threshold change could alter the mask, and the gate would be measuring
+    something it had itself influenced.
+    """
+
+    #: Number of faces the detector returned. More than one is a rejection, not a crop.
+    n_faces: int
+    #: (x, y, w, h) of the face box in NATIVE image pixels.
+    face_box: tuple[int, int, int, int]
+    #: Yaw, pitch, roll in degrees.
+    pose_deg: tuple[float, float, float]
+    #: Analyzable-skin mask over the native frame.
+    skin_mask: np.ndarray
+    #: ROI name -> surviving fraction of its polygon, from ``rois.measurable_fraction``.
+    roi_visibility: dict[str, float] = field(default_factory=dict)
+    #: Per-stage rejection fractions from ``skin_mask.build_with_diagnostics``.
+    occlusion: dict[str, float] = field(default_factory=dict)
+    device_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def check(
+    image: np.ndarray,
+    config: dict,
+    *,
+    face: FaceObservation | None = None,
+) -> CaptureQC:
     """Run every capture check and return a pass/fail with reasons.
 
     Checks: face presence/count/size, pose, blur, exposure and clipping, specular
     coverage, left/right shadow asymmetry, white balance, ROI visibility, occlusion,
     and a non-blocking filter/makeup warning.
 
+    Args:
+        image: BGR uint8, native resolution, as uploaded.
+        config: a resolved capture profile from ``util.config.capture_profile``.
+        face: what the face layer observed. ``None`` means no face was detected, which is
+            a rejection.
+
     Returns:
         CaptureQC. ``metrics`` is internal only; the public payload carries just the
         boolean and the reason list.
     """
-    raise NotImplementedError("capture.qc.check is not implemented yet.")
+    failures: list[QCFailure] = []
+    metrics: dict[str, float] = {}
+
+    cast, illumination = color.gray_world_deviation(image)
+    metrics["gray_world_deviation"] = cast
+    if cast > float(config["white_balance"]["max_gray_world_deviation"]):
+        # LOAD-BEARING under D4. Nothing downstream corrects a cast, so this check is the
+        # only thing between a badly lit room and an a* measurement.
+        failures.append(QCFailure.COLOR_CAST)
+
+    if face is None:
+        failures.append(QCFailure.NO_FACE)
+        return CaptureQC(
+            passed=False,
+            failures=failures,
+            metrics=metrics,
+            illumination_vector=illumination,
+        )
+
+    failures.extend(_check_face_geometry(image, config, face, metrics))
+
+    crop = canonical_crop(image, face.face_box, config)
+    failures.extend(_check_blur(crop, config, metrics))
+
+    skin = face.skin_mask
+    if not skin.any():
+        failures.append(QCFailure.OCCLUSION)
+        metrics["skin_px"] = 0.0
+    else:
+        failures.extend(_check_exposure(image, skin, config, metrics))
+        failures.extend(_check_shadow(image, skin, config, metrics))
+
+    failures.extend(_check_roi_visibility(config, face, metrics))
+    failures.extend(_check_occlusion(config, face, metrics))
+
+    # Filter/makeup is a WARNING, never a block (config: warn_on_suspected_filter). It
+    # biases every classical colour proxy, so it is recorded for validation slicing, but
+    # rejecting on a heuristic this weak would retake good captures.
+    if config["occlusion"].get("warn_on_suspected_filter", False):
+        metrics["suspected_filter"] = float(
+            _suspected_filter(
+                image, skin, float(config["occlusion"]["suspected_filter_detail_ratio"])
+            )
+        )
+
+    ordered = sorted(dict.fromkeys(failures), key=lambda f: f.value)
+    return CaptureQC(
+        passed=not ordered,
+        failures=ordered,
+        metrics=metrics,
+        illumination_vector=illumination,
+        device_metadata=dict(face.device_metadata),
+    )
+
+
+def precheck(image: np.ndarray, config: dict) -> CaptureQC:
+    """The subset of checks that need no face: blur over the whole frame, and colour cast.
+
+    Exists for the D10 latency budget. A frame that is obviously out of focus or badly
+    cast can be rejected before landmark detection and mask construction are paid for.
+    A pass here is NOT a pass overall -- ``check`` still has to run.
+    """
+    failures: list[QCFailure] = []
+    metrics: dict[str, float] = {}
+
+    cast, illumination = color.gray_world_deviation(image)
+    metrics["gray_world_deviation"] = cast
+    if cast > float(config["white_balance"]["max_gray_world_deviation"]):
+        failures.append(QCFailure.COLOR_CAST)
+
+    failures.extend(_check_blur(image, config, metrics, prefix="precheck_"))
+
+    return CaptureQC(
+        passed=not failures,
+        failures=sorted(dict.fromkeys(failures), key=lambda f: f.value),
+        metrics=metrics,
+        illumination_vector=illumination,
+    )
+
+
+# ------------------------------------------------------------------ canonical crop (D11)
+
+
+def canonical_crop(
+    image: np.ndarray,
+    face_box: tuple[int, int, int, int],
+    config: dict,
+) -> np.ndarray:
+    """Resample the face box to the profile's canonical width.
+
+    Downsampling to reach the canonical width is legitimate. UPSAMPLING is not, and is
+    refused: a blur score computed on interpolated pixels measures the interpolator. The
+    ``face.min_face_px`` check is what guarantees there is something to downsample from.
+    """
+    import cv2
+
+    x, y, w, h = face_box
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(image.shape[1], x + w), min(image.shape[0], y + h)
+    if x1 <= x0 or y1 <= y0:
+        return image
+
+    crop = image[y0:y1, x0:x1]
+    target = int(config["canonical"]["qc_face_width_px"])
+    if crop.shape[1] <= target:
+        return crop
+
+    scale_factor = target / crop.shape[1]
+    size = (target, max(1, int(round(crop.shape[0] * scale_factor))))
+    resized: np.ndarray = cv2.resize(crop, size, interpolation=cv2.INTER_AREA)
+    return resized
+
+
+# ------------------------------------------------------------------ individual checks
+
+
+def _fraction(predicate: np.ndarray) -> float:
+    """Share of True in a boolean array, 0.0 when empty."""
+    if predicate.size == 0:
+        return 0.0
+    return float(np.count_nonzero(predicate) / predicate.size)
+
+
+def _check_face_geometry(
+    image: np.ndarray,
+    config: dict,
+    face: FaceObservation,
+    metrics: dict[str, float],
+) -> list[QCFailure]:
+    spec = config["face"]
+    failures: list[QCFailure] = []
+
+    if face.n_faces > int(spec["max_faces"]):
+        # Rejected, not cropped to the largest. Silently picking one face means the scan
+        # may not be of the person who requested it.
+        failures.append(QCFailure.MULTIPLE_FACES)
+
+    _x, _y, box_w, box_h = face.face_box
+    height_frac = box_h / image.shape[0] if image.shape[0] else 0.0
+    metrics["face_height_frac"] = float(height_frac)
+    metrics["face_px"] = float(max(box_w, box_h))
+
+    if height_frac < float(spec["min_face_height_frac"]):
+        failures.append(QCFailure.FACE_TOO_SMALL)
+    if max(box_w, box_h) < int(spec["min_face_px"]):
+        failures.append(QCFailure.FACE_TOO_SMALL)
+
+    pose = config["pose"]
+    yaw, pitch, roll = face.pose_deg
+    metrics.update({"yaw_deg": float(yaw), "pitch_deg": float(pitch), "roll_deg": float(roll)})
+    if (
+        abs(yaw) > float(pose["max_yaw_deg"])
+        or abs(pitch) > float(pose["max_pitch_deg"])
+        or abs(roll) > float(pose["max_roll_deg"])
+    ):
+        # Beyond these, ROI polygons stop corresponding to the same anatomy across scans,
+        # which destroys repeatability -- the property this product is judged on.
+        failures.append(QCFailure.EXTREME_POSE)
+
+    return failures
+
+
+def _check_blur(
+    crop: np.ndarray,
+    config: dict,
+    metrics: dict[str, float],
+    *,
+    prefix: str = "",
+) -> list[QCFailure]:
+    """Focus check. ``prefix`` selects which support's thresholds apply.
+
+    The full frame and the canonical face crop are DIFFERENT SUPPORTS and get different
+    cutoffs. A frame is mostly background, which is smoother than skin, so reusing the
+    crop's threshold on the frame rejects captures that are perfectly in focus. Applying
+    one scale to two supports is the mistake that produced every skin-mask bug here.
+    """
+    import cv2
+
+    spec = config["blur"]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    gray = gray.astype(np.float32)
+
+    laplacian_var = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    tenengrad = float(np.asarray(gx * gx + gy * gy, dtype=np.float64).mean())
+
+    metrics[f"{prefix}laplacian_var"] = laplacian_var
+    metrics[f"{prefix}tenengrad"] = tenengrad
+
+    min_laplacian = float(spec[f"{prefix}min_laplacian_var"])
+    min_tenengrad = float(spec[f"{prefix}min_tenengrad"])
+    if laplacian_var < min_laplacian or tenengrad < min_tenengrad:
+        return [QCFailure.BLUR]
+    return []
+
+
+def _check_exposure(
+    image: np.ndarray,
+    skin: np.ndarray,
+    config: dict,
+    metrics: dict[str, float],
+) -> list[QCFailure]:
+    """Exposure over SKIN pixels, not the whole frame.
+
+    A dark background would otherwise drag the mean down and reject a well-exposed face,
+    and a blown background would do the reverse.
+    """
+    import cv2
+
+    spec = config["exposure"]
+    failures: list[QCFailure] = []
+
+    luma = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)[skin]
+    mean_luma = float(luma.mean())
+    clipped_low = _fraction(luma <= float(spec["clip_low_level"]))
+    clipped_high = _fraction(luma >= float(spec["clip_high_level"]))
+
+    metrics.update(
+        {
+            "mean_luma": mean_luma,
+            "clipped_low_frac": clipped_low,
+            "clipped_high_frac": clipped_high,
+        }
+    )
+
+    if mean_luma < float(spec["min_mean_luma"]) or clipped_low > float(
+        spec["max_clipped_low_frac"]
+    ):
+        failures.append(QCFailure.UNDEREXPOSED)
+    if mean_luma > float(spec["max_mean_luma"]) or clipped_high > float(
+        spec["max_clipped_high_frac"]
+    ):
+        failures.append(QCFailure.OVEREXPOSED)
+
+    # Specular coverage: bright AND washed out. Absolute chroma, not distance from skin
+    # chroma -- a blown highlight is neutral, so it sits FAR from skin chroma, not near it.
+    lab = color.bgr_to_lab(image)
+    chroma = color.chroma(lab)[skin]
+    lightness = lab[..., 0][skin]
+    specular_frac = _fraction(
+        (lightness > float(spec["specular_min_lightness"]))
+        & (chroma < float(spec["specular_max_chroma"]))
+    )
+    metrics["specular_frac"] = specular_frac
+    if specular_frac > float(spec["max_specular_frac"]):
+        failures.append(QCFailure.OVEREXPOSED)
+
+    return failures
+
+
+def _check_shadow(
+    image: np.ndarray,
+    skin: np.ndarray,
+    config: dict,
+    metrics: dict[str, float],
+) -> list[QCFailure]:
+    """Left/right luminance asymmetry and deep-shadow coverage over skin.
+
+    Side lighting is the single most common cause of a false asymmetry finding, and V1
+    corrects neither shadow nor cast (D4). This check is why redness may report asymmetry
+    at all.
+    """
+    import cv2
+
+    spec = config["shadow"]
+    failures: list[QCFailure] = []
+
+    luma = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    columns = np.nonzero(skin.any(axis=0))[0]
+    if columns.size == 0:
+        return [QCFailure.OCCLUSION]
+
+    midline = int((columns.min() + columns.max()) / 2)
+    left_half = skin.copy()
+    left_half[:, midline:] = False
+    right_half = skin.copy()
+    right_half[:, :midline] = False
+
+    overall = float(luma[skin].mean())
+    if overall <= 1e-6 or not left_half.any() or not right_half.any():
+        return [QCFailure.SHADOW_ASYMMETRY]
+
+    asymmetry = abs(float(luma[left_half].mean()) - float(luma[right_half].mean())) / overall
+    metrics["lr_luma_asymmetry"] = asymmetry
+    if asymmetry > float(spec["max_lr_luma_asymmetry"]):
+        failures.append(QCFailure.SHADOW_ASYMMETRY)
+
+    # Deep shadow RELATIVE TO THIS CAPTURE's own skin, so the test does not simply fire on
+    # dark skin -- which is dark but evenly lit.
+    deep_frac = _fraction(luma[skin] < float(spec["deep_shadow_luma_frac"]) * overall)
+    metrics["deep_shadow_frac"] = deep_frac
+    if deep_frac > float(spec["max_deep_shadow_frac"]):
+        failures.append(QCFailure.SHADOW_ASYMMETRY)
+
+    return failures
+
+
+def _check_roi_visibility(
+    config: dict,
+    face: FaceObservation,
+    metrics: dict[str, float],
+) -> list[QCFailure]:
+    spec = config["roi_visibility"]
+    floor = float(spec["min_visible_frac"])
+    required = [str(name) for name in spec.get("required", [])]
+
+    visible = [face.roi_visibility.get(name, 0.0) for name in required]
+    metrics["min_required_roi_visibility"] = float(min(visible)) if visible else 0.0
+
+    if any(v < floor for v in visible) or len(visible) < len(required):
+        return [QCFailure.INSUFFICIENT_ROI_VISIBILITY]
+    return []
+
+
+def _check_occlusion(
+    config: dict,
+    face: FaceObservation,
+    metrics: dict[str, float],
+) -> list[QCFailure]:
+    spec = config["occlusion"]
+    limits = {
+        "hair": float(spec["max_hair_frac"]),
+        "beard": float(spec["max_beard_frac"]),
+        "glasses": float(spec["max_glasses_frac"]),
+    }
+    for stage, limit in limits.items():
+        observed = float(face.occlusion.get(stage, 0.0))
+        metrics[f"{stage}_frac"] = observed
+        if observed > limit:
+            return [QCFailure.OCCLUSION]
+    return []
+
+
+def _suspected_filter(image: np.ndarray, skin: np.ndarray, max_detail_ratio: float) -> bool:
+    """Heuristic flag for beauty filters and heavy makeup. WARNING ONLY -- never blocks.
+
+    A filter's signature is skin that is smoother than the rest of the frame is sharp: the
+    smoothing is applied to the face, not to the background. Comparing the two is what
+    makes this independent of overall image sharpness, which the blur check already covers.
+
+    Deliberately not a rejection. It biases every classical colour proxy and so belongs in
+    the validation slice, but the heuristic is far too weak to send a user back for a
+    retake on its own.
+    """
+    import cv2
+
+    if not skin.any() or skin.all():
+        return False
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    detail = np.abs(cv2.Laplacian(gray, cv2.CV_32F))
+    face_detail = float(np.mean(detail[skin]))
+    frame_detail = float(np.mean(detail[~skin]))
+    if frame_detail <= 1e-6:
+        return False
+    return face_detail / frame_detail < max_detail_ratio

@@ -57,7 +57,33 @@ def standardize_roi(
             entry. Standardizing against absent statistics would silently produce zeros,
             which read as "perfectly average" rather than "unknown".
     """
-    raise NotImplementedError("decision.standardize.standardize_roi is not implemented yet.")
+    from ..schemas import CalibrationRequiredError
+
+    reference = load_reference(concern, roi)
+    if reference is None:
+        raise CalibrationRequiredError(
+            f"{concern.value}/{roi.value}: no calibrated population reference statistics. "
+            "Standardizing against absent statistics yields zeros, which read as "
+            "'perfectly average' rather than 'unknown' (D1 stage B)."
+        )
+
+    eps = float(config.get("eps", 1e-6))
+    medians = reference["median"]
+    mads = reference["mad"]
+
+    standardized: dict[str, float] = {}
+    for name, value in raw.items():
+        if name not in medians or name not in mads:
+            # A measurement the cohort never recorded cannot be standardized. Skipping it
+            # silently would let a concern be decided on a subset nobody chose, so this is
+            # a hard failure rather than a filtered-out key.
+            raise CalibrationRequiredError(
+                f"{concern.value}/{roi.value}: reference has no statistics for "
+                f"measurement {name!r}. The cohort and the feature module disagree about "
+                "what is being measured."
+            )
+        standardized[name] = robust_z(value, medians[name], mads[name], eps)
+    return standardized
 
 
 def load_reference(concern: Concern, roi: ROI) -> dict[str, dict[str, float]] | None:

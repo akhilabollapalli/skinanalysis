@@ -53,6 +53,17 @@ capture_profiles:
       min_laplacian_var: 120.0
       # Tenengrad/Sobel energy as a secondary check.
       min_tenengrad: 60.0
+      # The pre-gate runs on the WHOLE FRAME, before a face box exists. It therefore needs
+      # its OWN thresholds and may not reuse the two above: a frame is mostly background,
+      # which is smoother than skin, so the same cutoff applied to a wider support rejects
+      # good captures. (Reusing a threshold across two supports is the failure mode that
+      # produced every skin-mask bug in this project -- see config/skin_mask.yaml.)
+      #
+      # Deliberately loose. This gate only catches a catastrophically out-of-focus frame
+      # early enough to skip landmark detection and mask construction (D10). The real blur
+      # decision is made on the canonical crop.
+      precheck_min_laplacian_var: 15.0
+      precheck_min_tenengrad: 8.0
 
     exposure:
       # Mean luminance (0-255) over skin pixels.
@@ -62,8 +73,18 @@ capture_profiles:
       # measurable chroma information.
       max_clipped_low_frac: 0.02
       max_clipped_high_frac: 0.02
+      # 8-bit levels at which a pixel counts as clipped. Not 0 and 255: sensor noise and
+      # JPEG ringing move a genuinely clipped pixel by a level or two.
+      clip_low_level: 2.0
+      clip_high_level: 253.0
       # Specular highlight coverage; high values usually mean flash or oily sheen.
       max_specular_frac: 0.08
+      # A specular highlight is bright AND washed out. ABSOLUTE chroma, not distance from
+      # skin chroma: a blown highlight is neutral (a* ~ b* ~ 0) while skin sits at strongly
+      # positive a*/b*, so it is MAXIMALLY far from skin chroma. Testing the distance
+      # inverts the check, which this project has already got wrong once.
+      specular_min_lightness: 85.0        # L*, 0..100
+      specular_max_chroma: 8.0            # hypot(a*, b*)
 
     shadow:
       # Left/right mean-luminance difference as a fraction of overall mean.
@@ -71,6 +92,10 @@ capture_profiles:
       max_lr_luma_asymmetry: 0.12
       # Fraction of skin pixels in deep shadow, marked unmeasurable rather than analyzed.
       max_deep_shadow_frac: 0.15
+      # "Deep shadow" is relative to THIS capture's own mean skin luminance, not an
+      # absolute level. An absolute cutoff would fire on dark skin, which is dark but
+      # evenly lit -- the silent tone-dependent failure this project keeps guarding against.
+      deep_shadow_luma_frac: 0.45
 
     white_balance:
       # LOAD-BEARING under D4. Nothing downstream corrects a colour cast, so a capture
@@ -99,6 +124,10 @@ capture_profiles:
       # Heuristic flag only. Do not block the scan; warn and record for validation, since
       # makeup and filters bias every classical color proxy.
       warn_on_suspected_filter: true
+      # A filter smooths the FACE and leaves the background alone, so the signature is
+      # facial detail well below frame detail. Comparing the two is what makes this
+      # independent of overall sharpness, which the blur check already covers.
+      suspected_filter_detail_ratio: 0.35
 
 # D11: empty by design. A profile is added here only with the validation run that
 # demonstrated the device bias it corrects. Until then, log device metadata and use

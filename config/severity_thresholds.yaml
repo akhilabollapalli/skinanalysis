@@ -53,8 +53,35 @@ scale:
   anchor: inter_ocular_distance
   min_anchor_px: 90           # below this the capture cannot support local windows at all
 
+# ---------------------------------------------------------------- the three image copies
+# D5. They deliberately do NOT share preprocessing. Every knob here is fixed, i.e. it does
+# not depend on image content: an adaptive step upstream of a measurement means the
+# measurement partly reports the adaptation.
+image_copies:
+  color:
+    # sRGB -> Lab/D65 and nothing else (D4). These flags exist so that turning one on is a
+    # visible config change with a review attached, not an inline edit in a feature module.
+    gray_world: false
+    illuminant_estimation: false
+    clahe: false
+  texture:
+    # Luminance from L*, fixed linear rescale. CLAHE is local adaptive gain, so a GLCM
+    # computed downstream of it partly measures CLAHE's response to the neighbourhood
+    # instead of the skin.
+    clahe: false
+    normalization: fixed
+  ridge:
+    # The only branch where enhancement is even permitted, and only after validation.
+    # Adopting one refreezes calibration, because the ridge response distribution moves.
+    enhancement: none         # none | (a validated method name)
+    clahe: false
+
 defaults:
   eps: 1.0e-6
+  # Pixel floor for a per-ROI robust statistic, in anchor^2 (D1). Below this a median and
+  # a MAD are computed from too few pixels to mean anything, and the honest answer is
+  # UNMEASURABLE rather than a number that looks like every other number.
+  min_support_frac_of_iod2: 0.004
   # z_ref cutoffs: not_detected < t0 <= mild < t1 <= moderate < t2 <= high
   thresholds: {t0: 0.5, t1: 1.5, t2: 2.5}
   # A region is reported only if it is at least this severe.
@@ -83,12 +110,25 @@ redness:
     use_roi_median: true
   metric:
     channel: a_star
-    percentile_for_intensity: 95
+    # Names the `p90_delta_a` raw measurement, so it is 90 and not 95. A config value that
+    # disagrees with the measurement name it produces is a bug waiting to be inherited by
+    # a cohort statistic.
+    percentile_for_intensity: 90
+    # z_local cutoff above which a pixel counts as affected (D1 stage A). PLACEHOLDER:
+    # this is a within-image contrast, not a severity, and it moves at calibration.
+    z_local_threshold: 1.5
     # Component areas are fractions of anchor^2 (D1): a 40-px blob is a lesion at one
     # resolution and sensor noise at another.
     min_component_area_frac_of_iod2: 0.0007    # reject speckle
   # Raw measurements handed to decision/standardize.py (D1 stage B).
   raw_measurements: [affected_area_ratio, median_positive_delta_a, p90_delta_a]
+  decision:
+    # How one ROI's several z_ref values collapse to one band. Erythema is patchy, so the
+    # worst standardized measurement carries the ROI.
+    combine: max
+    # Sign applied before combining: +1 when larger means worse. Every redness measurement
+    # already increases with severity.
+    direction: {affected_area_ratio: 1, median_positive_delta_a: 1, p90_delta_a: 1}
   asymmetry:
     enabled: true
     # Left/right difference is reported only when capture QC shadow asymmetry passed,
@@ -116,12 +156,24 @@ pigmentation:
   metric:
     channel: l_star
     direction: deficit
+    z_local_threshold: 1.5                     # PLACEHOLDER, moves at calibration
     min_component_area_frac_of_iod2: 0.0004
     max_component_area_frac_of_iod2: 0.10      # larger regions are shading, not spots
     # Reject candidates whose boundary gradient matches a shadow edge profile.
     shadow_rejection: true
+    # A pigmented spot has a SHARP boundary; a cast shadow ramps, because it is a penumbra.
+    # The discriminant is the observed boundary gradient divided by the gradient a STEP
+    # edge of the SAME contrast would produce across `shadow_edge_width_frac_of_iod`.
+    # Dividing by the component's own contrast is what stops the test from simply
+    # preferring dark components; the width is a fraction of the anchor so the ratio is
+    # dimensionless and scale-invariant (D1). Below this, the candidate is shading.
     shadow_gradient_ratio: 0.35
+    # The distance a genuine spot's edge is expected to transition over.
+    shadow_edge_width_frac_of_iod: 0.01
   raw_measurements: [spot_area_ratio, median_delta_L, spot_count]
+  decision:
+    combine: max
+    direction: {spot_area_ratio: 1, median_delta_L: 1, spot_count: 1}
   aggregation:
     method: max_with_support
     min_rois_at_max: 2
@@ -144,21 +196,71 @@ texture:
   clahe: false
   primary_rois: [forehead, left_cheek, right_cheek, nose]         # nasolabial excluded (D8)
   patch:
-    size_frac_of_iod: 0.52
-    stride_frac_of_iod: 0.26
+    # 0.52 was tried and is larger than a cheek. Measured on real faces, no 131px patch
+    # (0.52 x an anchor of 252) was 75% analyzable skin in either cheek or the nose, so
+    # texture could only ever be scored on the forehead -- and the other three ROIs
+    # reported UNMEASURABLE for a reason that had nothing to do with the capture.
+    #
+    # A patch must fit INSIDE the narrowest primary ROI after erosion, not merely inside
+    # the face. Changing this changes the GLCM statistic, so it may only move while the
+    # concern is uncalibrated; afterwards it refreezes calibration.
+    size_frac_of_iod: 0.26
+    stride_frac_of_iod: 0.13
     min_valid_frac: 0.75
     max_patches_per_roi: 24    # D10 latency budget; sampled deterministically
   glcm:
-    distances: [1, 2, 4]
+    # Co-occurrence offsets as FRACTIONS OF THE ANCHOR, resolved to integer pixels at
+    # runtime (D1). Fixed offsets of [1, 2, 4] px were the first version and are a pixel-
+    # valued spatial parameter: at two capture distances the same offset spans different
+    # physical skin, so a contrast computed with one does not transfer to a cohort built
+    # with the other. These fractions reproduce [1, 2, 4] px at an anchor of 250.
+    #
+    # Rounding to integers makes the offsets lumpy at small anchors -- unavoidable, since a
+    # GLCM offset has to be a whole pixel. `scale.min_anchor_px` is what keeps the capture
+    # far enough from the floor for the three offsets to stay distinct.
+    distances_frac_of_iod: [0.004, 0.008, 0.016]
     angles_deg: [0, 45, 90, 135]
     levels: 64
     features: [contrast, homogeneity, energy, entropy]
   frequency:
-    hf_band_lo: 0.25           # normalized frequency; tied to capture pixel density
-    hf_band_hi: 0.80
+    # Band edges in CYCLES PER PATCH, not cycles per pixel.
+    #
+    # Cycles per pixel was tried and is scale DEPENDENT, which defeats the whole point of
+    # an anchor-proportional patch: the patch covers the same fraction of the face at every
+    # capture distance, so a closer capture spends more pixels on the same physical skin and
+    # every physical feature slides DOWN the cycles-per-pixel axis. Measured on the same
+    # synthetic skin at IOD 130 and IOD 260, hf_ratio moved 0.46 -> 0.74 -- a 60% drift that
+    # would have gone straight into the cohort statistics as if it were skin.
+    #
+    # Cycles per patch is invariant because the patch is a fixed fraction of the anchor.
+    #
+    # The upper edge must stay below the Nyquist limit of the SMALLEST patch the capture
+    # floor allows (min_anchor_px 90 x size_frac_of_iod 0.26 = 23 px, Nyquist 11.5), or part
+    # of the band is simply unmeasurable at the low end of the supported scale range.
+    hf_band_lo_cycles_per_patch: 3.0
+    hf_band_hi_cycles_per_patch: 10.0
   aggregate: robust_mean       # across patches within an ROI
+  # Fixed grey-level quantization for the GLCM, over the FULL luminance range rather than
+  # per-patch min/max. Per-patch rescaling would be adaptive gain by the back door, which
+  # is the same objection that keeps CLAHE out of this branch (D5).
+  quantization:
+    range: [0.0, 255.0]
   raw_measurements: [glcm_contrast, glcm_homogeneity, glcm_energy, glcm_entropy,
                      gradient_energy, local_variance, hf_ratio]
+  decision:
+    # Roughness is a FIELD property, so the median across measurements is the honest
+    # summary; a max would let one GLCM feature's noise set the band.
+    combine: median
+    # Homogeneity and energy fall as texture gets rougher, so their sign is inverted
+    # before combining. Without this, a rough ROI would partially cancel itself out.
+    direction:
+      glcm_contrast: 1
+      glcm_homogeneity: -1
+      glcm_energy: -1
+      glcm_entropy: 1
+      gradient_energy: 1
+      local_variance: 1
+      hf_ratio: 1
   aggregation:
     method: max_with_support
     min_rois_at_max: 2
@@ -179,13 +281,32 @@ wrinkles:
   primary_rois: [forehead, left_crows_feet, right_crows_feet,
                  left_under_eye, right_under_eye, left_nasolabial, right_nasolabial]
   clahe: false                 # ablation candidate only; adopting it refreezes calibration (D5)
+  # Filter scales are FRACTIONS OF THE ANCHOR, like every other spatial parameter (D1).
+  #
+  # `sigmas` and `scales` were originally in pixels while `lambda` was already fractional,
+  # which is the worst of both: the envelope and the wavelength of the same Gabor kernel
+  # scaled differently with capture distance, so the bank was not merely mis-scaled, it
+  # changed SHAPE between two captures of the same face. The values below reproduce the
+  # original pixel scales at an anchor of 250.
   gabor:
-    sigmas: [1.5, 2.5, 4.0]
+    sigmas_frac_of_iod: [0.006, 0.010, 0.016]
     orientations: 8
     lambda_frac_of_iod: [0.016, 0.033, 0.065]
   hessian:
-    scales: [1.0, 2.0, 3.0]
+    scales_frac_of_iod: [0.004, 0.008, 0.012]
     ridge_response: frangi
+  # Cut on the combined ridge response, as a PERCENTILE within the ROI.
+  #
+  # Deliberately not a MAD-based z_local, and this is the one place in the project where
+  # z_local is the wrong tool. A ridge response is one-sided and spikes at zero: on a real
+  # forehead its median was 0.006 and its MAD 0.009, so z >= 1.5 selected 40% of the ROI
+  # and the "lines" were blobs. A MAD estimated on a spike-at-zero distribution does not
+  # describe its spread, so a z threshold on it has no stable meaning.
+  #
+  # PLACEHOLDER: this fixes what fraction of each ROI enters the geometry filter, and the
+  # geometry filter -- not this number -- does the actual discrimination. Calibrate it
+  # against real captures, not against generative images (SFHQ is infrastructure only).
+  ridge_percentile_cut: 96.0
   morphology:
     min_line_length_frac_of_iod: 0.10
     max_line_width_frac_of_iod: 0.05
@@ -195,6 +316,11 @@ wrinkles:
     glasses: true
     roi_edge_margin_frac_of_iod: 0.033   # ignore responses hugging the ROI boundary
   raw_measurements: [line_density, line_length, ridge_contrast]
+  decision:
+    # Lines are focal: one deeply creased band is the finding, so the worst standardized
+    # measurement carries the ROI.
+    combine: max
+    direction: {line_density: 1, line_length: 1, ridge_contrast: 1}
   aggregation:
     method: max_with_support
     min_rois_at_max: 2

@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 
 from ..schemas import RunMode
-from ..util import scale
+from ..util import color, scale
 
 MAD_SCALE = 1.4826
 
@@ -72,18 +72,11 @@ class SkinReference:
 def _to_lab(image: np.ndarray) -> np.ndarray:
     """BGR uint8 -> CIELAB float32, using the fixed D65 conversion (D4).
 
-    No gray-world, no illuminant estimation. Illumination is handled by the fact that
-    every threshold here is relative to the subject's own reference.
+    Delegates to ``util.color`` so the mask and the colour concerns cannot drift apart on
+    what L* and a* mean. If they did, the mask would reject pixels on one scale while a
+    feature measured them on another, and nothing about that would look wrong in an overlay.
     """
-    import cv2
-
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
-    # OpenCV packs 8-bit Lab as L in 0..255 and a/b offset by 128. Undo both so the values
-    # are comparable to the literature and to the feature modules.
-    lab[..., 0] *= 100.0 / 255.0
-    lab[..., 1] -= 128.0
-    lab[..., 2] -= 128.0
-    return lab
+    return color.bgr_to_lab(image)
 
 
 def _mad(values: np.ndarray) -> float:

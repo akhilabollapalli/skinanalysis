@@ -12,7 +12,9 @@ import yaml
 CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
 
 #: Top-level keys in severity_thresholds.yaml that are not concerns.
-_NON_CONCERN_KEYS = frozenset({"meta", "defaults", "reference_stats", "scale"})
+_NON_CONCERN_KEYS = frozenset(
+    {"meta", "defaults", "reference_stats", "scale", "image_copies"}
+)
 
 
 @cache

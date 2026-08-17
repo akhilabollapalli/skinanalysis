@@ -89,9 +89,13 @@ def test_no_fixed_pixel_windows_in_active_concerns(concern: str) -> None:
     )
 
 
-@pytest.mark.xfail(reason="pipeline not implemented yet", strict=True)
 def test_pipeline_is_deterministic_for_identical_input() -> None:
-    """The floor beneath repeatability, and the only half of it CI can check."""
+    """The floor beneath repeatability, and the only half of it CI can check.
+
+    Noise, so this exercises the fail-closed path rather than the measurement path. Both
+    have to be deterministic: a scan that gives two different RETAKE reasons for the same
+    bytes is as broken as one that gives two different severities.
+    """
     rng = np.random.default_rng(0)
     image = rng.integers(0, 255, (720, 720, 3), dtype=np.uint8)
     first = pipeline.analyze_scan_internal(image).to_internal_payload()

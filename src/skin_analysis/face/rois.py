@@ -85,7 +85,7 @@ def _erode(mask: np.ndarray, margin_px: int) -> np.ndarray:
         return mask
     size = 2 * margin_px + 1
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
-    return cv2.erode(mask.astype(np.uint8), kernel).astype(bool)
+    return np.asarray(cv2.erode(mask.astype(np.uint8), kernel), dtype=np.uint8).astype(bool)
 
 
 def _convex_ring(points: np.ndarray) -> np.ndarray:

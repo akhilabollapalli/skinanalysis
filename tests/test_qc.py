@@ -59,7 +59,6 @@ def test_device_metadata_is_logged_for_future_profiling() -> None:
     assert {"make", "model", "image_width", "image_height"} <= set(recorded)
 
 
-@pytest.mark.xfail(reason="qc.check not implemented yet", strict=True)
 def test_blank_image_is_rejected(capture_config: dict) -> None:
     blank = np.zeros((720, 720, 3), dtype=np.uint8)
     result = qc.check(blank, capture_config)
@@ -67,8 +66,39 @@ def test_blank_image_is_rejected(capture_config: dict) -> None:
     assert result.failures
 
 
-@pytest.mark.xfail(reason="qc.check not implemented yet", strict=True)
 def test_failure_reasons_are_public_but_metrics_are_not(capture_config: dict) -> None:
     blank = np.zeros((720, 720, 3), dtype=np.uint8)
     public = qc.check(blank, capture_config).to_public()
     assert set(public.keys()) == {"pass", "reasons"}
+
+
+def test_no_face_is_a_rejection_not_a_default(capture_config: dict) -> None:
+    """A frame with no detectable face has nothing to measure. It is not a pass."""
+    frame = np.full((720, 720, 3), 128, dtype=np.uint8)
+    result = qc.check(frame, capture_config, face=None)
+    assert result.passed is False
+    assert QCFailure.NO_FACE in result.failures
+
+
+def test_precheck_does_not_stand_in_for_the_full_gate(capture_config: dict) -> None:
+    """precheck exists for latency (D10). Passing it is not passing QC."""
+    blank = np.zeros((720, 720, 3), dtype=np.uint8)
+    assert qc.precheck(blank, capture_config).passed is False
+
+
+def test_metrics_stay_out_of_the_public_payload(capture_config: dict) -> None:
+    """Rule 3: internal numbers are logged, never rendered."""
+    blank = np.zeros((720, 720, 3), dtype=np.uint8)
+    result = qc.check(blank, capture_config)
+    assert result.metrics, "QC must record metrics internally for validation"
+    assert "metrics" not in result.to_public()
+    assert "illumination_vector" not in result.to_public()
+
+
+def test_illumination_vector_is_recorded(capture_config: dict) -> None:
+    """D4: recorded as evidence, never applied to the pixels."""
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    frame[..., 2] = 200  # a strong red cast
+    result = qc.check(frame, capture_config, face=None)
+    assert set(result.illumination_vector) == {"r", "g", "b"}
+    assert QCFailure.COLOR_CAST in result.failures
