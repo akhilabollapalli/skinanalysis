@@ -1,0 +1,128 @@
+# Release validation gates. Consumed by scripts/run_validation.py.
+#
+# ---------------------------------------------------------------------------------------
+# THESE VALUES ARE PRESPECIFIED. A threshold chosen after seeing a result is not a gate,
+# it is a description of that result. Every number below was written before any corpus was
+# run against it, and each carries the reasoning that produced it.
+#
+# Changing one is allowed, but it is a decision with a paper trail: record WHY in the
+# comment beside it and re-run every suite. Silently relaxing a bound to make a release
+# green is the single failure this file exists to prevent.
+# ---------------------------------------------------------------------------------------
+#
+# Why repeatability rather than accuracy is gated hardest (D13, CLAUDE.md §5): a user who
+# rescans within five minutes and watches "mild" become "high" stops trusting the product,
+# whatever it scores against expert labels. Accuracy without stability is not usable.
+
+meta:
+  schema_version: "1.0.0"
+  prespecified_on: 2026-08-17
+  # Bump when a gate value changes, so a validation report can be traced to the gate set
+  # it was judged against. A report that does not name its gate version proves nothing.
+  gate_set_version: v1
+
+corpus:
+  # Sidecar CSV describing the corpus. Real face images are never committed (CLAUDE.md §5),
+  # so the corpus lives outside the repo and this file is what makes it interpretable.
+  manifest_filename: manifest.csv
+  # Without these two, nothing can be grouped and repeatability cannot be computed at all.
+  required_columns: [image, subject_id]
+  # Optional, but each missing column silently removes a fairness slice. A run that cannot
+  # slice by skin tone is not evidence about skin tone -- it is evidence about whoever
+  # happened to be photographed.
+  slice_columns: [skin_tone, device, lighting, age_band, makeup_facial_hair]
+  # A session groups captures taken back-to-back under unchanged conditions. Absent, every
+  # capture of a subject is treated as one session, which mixes cross-session skin change
+  # into a same-session measurement-noise number.
+  session_column: session_id
+  # Below this a subgroup is REPORTED but not gated. Small n is itself a finding and must
+  # be printed, never smoothed over by pooling it into a neighbouring group.
+  min_subgroup_n: 5
+  # Duplicate files inflate agreement: the same bytes analysed twice agree perfectly and
+  # tell you nothing. A real 50-image corpus in this project turned out to hold 29 unique
+  # images, so this is deduplication by content hash, on by default.
+  deduplicate_by_content_hash: true
+
+repeatability:
+  # Same-session rescans. Fewer than two captures cannot show stability.
+  min_captures_per_group: 2
+
+  gates:
+    ordinal_agreement:
+      # Fraction of subject-sessions whose captures all return the identical severity.
+      # The headline number.
+      #
+      # Only groups whose captures ALL returned an ordinal band are counted. UNMEASURABLE
+      # and DISABLED are excluded rather than counted as agreement -- an uncalibrated build
+      # returns UNMEASURABLE everywhere, and calling that 100% agreement would turn the
+      # most important gate in the project into a check that passes because nothing was
+      # measured.
+      min_fraction: 0.90
+      # Equality ACROSS slices matters as much as the pooled value. A build that is stable
+      # on average and unstable on one skin tone is a failed build, and pooling hides it.
+      max_slice_spread: 0.10
+
+    raw_metric_cv:
+      # Coefficient of variation of each raw measurement within a subject-session.
+      #
+      # Gated on the p95 across (group, ROI, measurement) tuples, not the median.
+      # Repeatability is a tail property: a user notices the one scan that flipped, not
+      # the four that held. A median CV would be dominated by the easy captures.
+      #
+      # Bounds differ by concern because the underlying signals differ in kind, not in
+      # quality. Colour statistics over a whole ROI average many pixels and should be
+      # tight. Wrinkle geometry depends on a thresholded ridge map, where one line
+      # crossing a percentile cut changes a count -- inherently coarser.
+      p95_max_cv:
+        redness: 0.20
+        pigmentation: 0.25
+        texture: 0.15
+        wrinkles: 0.35
+      # A measurement whose mean is zero across a group has no defined CV. Counted and
+      # reported separately: many of them means the concern is mostly finding nothing,
+      # which is a finding about the concern, not a stability result.
+
+    roi_availability_agreement:
+      # Do the same ROIs come back measurable across rescans of one session?
+      #
+      # Separate from ordinal agreement on purpose. An ROI that is measurable in one scan
+      # and not the next changes which regions the user is told about, even when every
+      # severity that WAS produced agreed. That reads to the user as the product changing
+      # its mind.
+      min_fraction: 0.90
+
+    candidate_map_stability:
+      # NOT IMPLEMENTED. Declared here so it stays visible as an unmet requirement rather
+      # than quietly dropping off the list (CLAUDE.md §5 names four repeatability gates).
+      #
+      # Two things block it, both real:
+      #   1. Feature modules return summary measurements, not the candidate masks. Adding
+      #      a mask to FeatureResultInternal widens the boundary contract, so it is a
+      #      deliberate decision rather than a convenience.
+      #   2. Between two distinct captures the head moves, so pixel-space IoU measures head
+      #      motion, not detector stability. It needs the maps warped into a canonical
+      #      landmark frame first.
+      #
+      # Until both are done this gate reports "not evaluated", and the run is not release
+      # evidence. The area-ratio measurements are NOT a stand-in: two disjoint maps of
+      # equal area score identically on area and share no pixel.
+      implemented: false
+      min_registered_iou: 0.50
+      blocked_on: "landmark-registered candidate map export from feature modules"
+
+capture:
+  gates:
+    rejection_rate:
+      # Fraction of captures the QC gate rejects. Too high and the product is unusable;
+      # concentrated in one subgroup and it is a fairness problem wearing a usability
+      # costume -- which is why the spread is gated alongside the level.
+      max_fraction: 0.35
+      max_slice_spread: 0.20
+
+fairness:
+  # Slices that must be present for a run to count as release evidence. A validation run
+  # over one family in one lighting setup is a smoke test, and labelling it otherwise is
+  # how a tone-dependent bug ships. This project has already found one: a specular check
+  # that worked on light skin and was silently dead on brown skin.
+  required_slices: [skin_tone, device, lighting]
+  min_values_per_required_slice: 2
