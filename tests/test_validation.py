@@ -299,10 +299,45 @@ def test_unevaluated_is_neither_pass_nor_fail() -> None:
 
 def test_every_enabled_concern_has_a_prespecified_cv_bound() -> None:
     """An enabled concern with no bound is ungated, and ungated is indistinguishable from
-    passing in a summary table."""
+    passing in a summary table.
+
+    Compared by Concern.value (run_validation._enabled_concern_values), the same
+    vocabulary a Record actually uses -- not by the severity_thresholds.yaml config key.
+    Comparing by config key is exactly the bug this file used to have: it checked
+    "pigmentation" against a bounds table that a real Record can never be keyed by,
+    so a missing bound for the vocabulary that matters would not have been caught.
+    """
     bounds = GATES["repeatability"]["gates"]["raw_metric_cv"]["p95_max_cv"]
-    enabled = [c for c in cfg.configured_concerns() if cfg.feature_enabled(c)]
+    enabled = run_validation._enabled_concern_values()
     assert not [c for c in enabled if c not in bounds]
+
+
+def test_pigmentation_config_key_and_concern_value_disagree() -> None:
+    """Documents the exact vocabulary split every concern-keyed lookup here must respect.
+
+    If this ever starts failing, pigmentation's Concern.value changed and every comment
+    in this file and in config/validation_gates.yaml explaining the split is stale.
+    """
+    assert cfg.feature_enabled("pigmentation")
+    assert "pigmentation" not in run_validation._enabled_concern_values()
+    assert "dark_spots" in run_validation._enabled_concern_values()
+
+
+def test_ordinal_agreement_finds_pigmentation_by_its_concern_value() -> None:
+    """Regression test for the bug itself.
+
+    Before the fix, run_repeatability looked pigmentation up as "pigmentation" -- a key no
+    Record ever has -- so this gate reported NOT_EVALUATED on every run, forever, without
+    raising. A silent gate that never fires is worse than no gate: it looks green.
+    """
+    records = [
+        record("a1.jpg", "s1", severity="mild", concern="dark_spots"),
+        record("a2.jpg", "s1", severity="mild", concern="dark_spots"),
+    ]
+    results = run_validation.run_repeatability(records, GATES, [], 5)
+    gate = next(g for g in results if g.name == "ordinal_agreement[dark_spots]")
+    assert gate.status == "pass"
+    assert gate.value == 1.0
 
 
 def test_gate_set_is_versioned() -> None:

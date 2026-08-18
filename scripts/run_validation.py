@@ -49,6 +49,35 @@ from skin_analysis.util import config as cfg  # noqa: E402
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
 
+
+def _enabled_concern_values() -> list[str]:
+    """Enabled concerns, named the way a Record actually names them.
+
+    ``cfg.configured_concerns()`` returns severity_thresholds.yaml's CONFIG keys
+    (``redness``, ``pigmentation``, ``texture``, ``wrinkles``, ...). A Record's
+    ``severities`` / ``raw`` / ``measurable_rois`` are keyed by ``Concern.value`` instead,
+    because they are flattened straight from ``ScanResultInternal.to_internal_payload()``,
+    which iterates ``dict[Concern, FeatureResultInternal]``.
+
+    Those vocabularies agree for redness/texture/wrinkles and silently disagree for
+    pigmentation, whose ``Concern.value`` is ``dark_spots`` (CLAUDE.md: "the product calls
+    dark spots"; the two names are kept distinct on purpose so neither layer has to know
+    the other's vocabulary -- see pipeline._CONCERN_OF). Looking a Record up by the config
+    key ``"pigmentation"`` finds nothing, ever, and the gate reports NOT_EVALUATED forever
+    without raising -- exactly the shape of silent failure this project keeps finding
+    elsewhere (a value estimated on one vocabulary and applied under another).
+
+    ``pipeline._CONCERN_OF`` is the single source of truth for this mapping and is reused
+    here rather than duplicated, the same way qc_report.py reaches into
+    ``pipeline._GATED_MASK_STAGES``.
+    """
+    return [
+        concern.value
+        for key, concern in pipeline._CONCERN_OF.items()
+        if cfg.feature_enabled(key)
+    ]
+
+
 #: Severities that sit on the ordinal scale and can therefore be compared to each other.
 #: UNMEASURABLE and DISABLED are states, not findings, and comparing them to a band is
 #: meaningless -- see the ordinal_agreement comment in config/validation_gates.yaml.
@@ -275,7 +304,7 @@ def run_repeatability(
     spec = gates["repeatability"]
     session_column = gates["corpus"]["session_column"]
     groups = group_records(records, session_column, int(spec["min_captures_per_group"]))
-    concerns = [c for c in cfg.configured_concerns() if cfg.feature_enabled(c)]
+    concerns = _enabled_concern_values()
     results: list[GateResult] = []
 
     if not groups:
@@ -551,7 +580,7 @@ def partition(records: list[Record], column: str) -> dict[str, list[Record]]:
 def slice_report(records: list[Record], slice_columns: list[str], min_subgroup_n: int) -> str:
     """Per-slice severity distribution and rejection rate. Never a pooled headline."""
     lines: list[str] = []
-    concerns = [c for c in cfg.configured_concerns() if cfg.feature_enabled(c)]
+    concerns = _enabled_concern_values()
 
     for column in slice_columns:
         buckets = partition(records, column)

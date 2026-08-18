@@ -73,9 +73,16 @@ repeatability:
       # quality. Colour statistics over a whole ROI average many pixels and should be
       # tight. Wrinkle geometry depends on a thresholded ridge map, where one line
       # crossing a percentile cut changes a count -- inherently coarser.
+      #
+      # Keyed by Concern.value (the product-facing name), NOT by the config key the
+      # concern is defined under in severity_thresholds.yaml. Pigmentation is the one
+      # place those two vocabularies disagree: its config key is `pigmentation`, but
+      # `Concern.DARK_SPOTS.value` -- what a Record and this gate actually see -- is
+      # `dark_spots`. Keying this table `pigmentation` silently orphaned the bound: the
+      # gate found no record ever, so it reported NOT_EVALUATED forever without raising.
       p95_max_cv:
         redness: 0.20
-        pigmentation: 0.25
+        dark_spots: 0.25
         texture: 0.15
         wrinkles: 0.35
       # A measurement whose mean is zero across a group has no defined CV. Counted and
