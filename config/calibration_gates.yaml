@@ -1,0 +1,77 @@
+# Acceptance criteria for a calibration run (D1 stage B, D2). Consumed by
+# scripts/calibrate.py.
+#
+# PRESPECIFIED, same discipline as config/validation_gates.yaml: a bar chosen after seeing
+# the holdout result is a description of that result, not a bar. Every number below was
+# written before any cohort existed to run against it.
+#
+# WHAT THIS FILE DOES NOT DO. It does not flip severity_thresholds.yaml meta.calibrated,
+# and it does not flip a reference manifest's frozen flag. Those are the actions that let
+# real users see a severity, and scripts/calibrate.py will not take them even when every
+# gate below passes -- it writes a report and proposed reference statistics, and a human
+# reads the report and makes those two edits by hand. See CLAUDE.md §6: no code path may
+# substitute a calibrated result for a decision nobody made.
+
+meta:
+  schema_version: "1.0.0"
+  prespecified_on: 2026-08-18
+  gate_set_version: v1
+
+cohort:
+  # Below this, reference statistics are computed and written but the concern's file is
+  # marked calibrated: false. A median and MAD from a handful of subjects look entirely
+  # normal and mean nothing -- this must agree with
+  # severity_thresholds.yaml reference_stats.min_cohort_subjects, and calibrate.py reads
+  # that value directly rather than duplicating it here, so the two cannot drift apart.
+  #
+  # Subject-level, not image-level: five subjects photographed forty times each is five
+  # subjects, and averaging within a subject before computing cohort statistics (see
+  # scripts/calibrate.py `_subject_level_raw`) is what keeps repeat captures of one person
+  # from being counted as independent population variation.
+  holdout_fraction: 0.30
+  # Minimum labelled subjects per ordinal band, per (concern, ROI), on EACH side of the
+  # split. A threshold fit where one band has two examples is fit to noise, and a holdout
+  # eval where one band has two examples cannot show that the fit generalises.
+  min_labelled_per_band: 8
+
+thresholds:
+  # The ordinal cut-point fit (scripts/calibrate.py `fit_thresholds`) is a monotonic
+  # 4-bin partition of the TRAIN subjects' combined z_ref, chosen to match annotated
+  # labels as closely as possible. These gates judge that fit on the HOLDOUT subjects,
+  # which never influenced where the cuts were placed.
+  gates:
+    exact_agreement:
+      # Fraction of holdout (concern, ROI) labels where the fitted thresholds reproduce
+      # the annotator's exact band. This is deliberately lower than the repeatability
+      # agreement bar in validation_gates.yaml (0.90): that gate asks two scans of the
+      # SAME face to agree with each other, which is a much easier target than a
+      # classical proxy agreeing with an expert's judgement across different faces.
+      min_fraction: 0.70
+    adjacent_agreement:
+      # Fraction within one band of the annotated label (e.g. MODERATE for a MILD
+      # annotation counts, HIGH does not). A one-band miss is a calibration looseness a
+      # user is unlikely to notice; a two-band miss -- NOT_DETECTED reported as HIGH -- is
+      # the failure this gate exists to catch, and exact_agreement alone would not
+      # distinguish the two.
+      min_fraction: 0.90
+    max_slice_spread:
+      # Same principle as validation_gates.yaml: a fit that agrees on average and misses
+      # badly on one skin tone must not ship. Spread is exact_agreement's max-min gap
+      # across slice values with enough labelled subjects to be gateable.
+      exact_agreement: 0.15
+
+annotations:
+  # Minimum columns. subject_id joins against the capture corpus manifest (the same one
+  # scripts/run_validation.py and scripts/qc_report.py read); concern and roi use the
+  # SAME vocabulary the pipeline itself uses -- Concern.value (e.g. "dark_spots", not the
+  # config key "pigmentation") and ROI.value. See the comment in
+  # scripts/run_validation.py `_enabled_concern_values` for why that distinction is load-
+  # bearing: keying a lookup by the config name instead of Concern.value is exactly the
+  # bug that made the pigmentation repeatability gate silently never fire.
+  required_columns: [subject_id, concern, roi, severity]
+  # One row per (subject, concern, ROI): an annotator's judgement of the SUBJECT's
+  # condition in that region, not of one particular photo. A subject with five captures in
+  # the corpus gets one label per ROI, not five -- multiple rows for the same key are an
+  # inter-annotator disagreement, not repeat evidence, and are handled by majority vote
+  # with the disagreement counted and reported rather than silently averaged away.
+  severity_values: [not_detected, mild, moderate, high]
