@@ -143,11 +143,8 @@ def _panel_masks(image: np.ndarray, masks: dict[str, np.ndarray], title: str,
     return canvas
 
 
-def _panel_skin(image: np.ndarray, skin: np.ndarray | None) -> np.ndarray:
+def _panel_skin(image: np.ndarray, skin: np.ndarray) -> np.ndarray:
     canvas = image.copy()
-    if skin is None:
-        _label(canvas, "SKIN MASK - not implemented (B4)", (10, 24), (0, 165, 255))
-        return canvas
     _tint(canvas, skin, (255, 255, 255), alpha=0.35)
     _label(canvas, "SKIN MASK", (10, 24))
     return canvas
@@ -196,15 +193,10 @@ def render(image: np.ndarray, mode: str, roi: str | None, show_anchor: bool) -> 
         geometry.landmarks, image.shape[:2], roi_config, run_mode=RunMode.DEVELOPMENT
     )
 
-    skin: np.ndarray | None = None
-    try:
-        import skin_analysis.face.skin_mask as skin_mask
+    import skin_analysis.face.skin_mask as skin_mask
 
-        skin = skin_mask.build(image, geometry.landmarks, roi_config)
-    except NotImplementedError:
-        skin = None  # B4 not landed yet; polygons are still fully reviewable without it
-
-    composed = roi_mod.compose(polygons, skin) if skin is not None else polygons
+    skin = skin_mask.build(image, geometry.landmarks, roi_config)
+    composed = roi_mod.compose(polygons, skin)
 
     panels = {
         "landmarks": lambda: _panel_landmarks(image, geometry, anchor_px, show_anchor),
