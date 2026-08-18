@@ -200,13 +200,22 @@ class CaptureQC:
     #: validated colour-constancy step. Under D4 it must NEVER be applied to the pixels.
     illumination_vector: dict[str, float] = field(default_factory=dict)  # internal only
     device_metadata: dict[str, Any] = field(default_factory=dict)  # internal only
+    #: Whether left/right lighting was even enough to trust a cross-side comparison.
+    #:
+    #: Deliberately NOT folded into ``failures``/``passed``. Uneven lighting invalidates a
+    #: LEFT-VS-RIGHT comparison (redness/pigmentation asymmetry), but does not corrupt
+    #: what either side reads on its own -- each cheek's own colour is still real pixels.
+    #: Rejecting the whole capture over this discarded six measurable ROIs to protect one
+    #: comparison. This field is what lets ``QCVerdict.shadow_pass`` suppress just that
+    #: comparison (see features/redness.py ``asymmetry()``) while the capture proceeds.
+    shadow_asymmetry_ok: bool = True
 
     def verdict(self) -> QCVerdict:
         """The sanitized view handed to feature modules via :class:`FeatureContext`."""
         failed = set(self.failures)
         return QCVerdict(
             passed=self.passed,
-            shadow_pass=QCFailure.SHADOW_ASYMMETRY not in failed,
+            shadow_pass=self.shadow_asymmetry_ok,
             color_cast_pass=QCFailure.COLOR_CAST not in failed,
             exposure_pass=not failed & {
                 QCFailure.UNDEREXPOSED,

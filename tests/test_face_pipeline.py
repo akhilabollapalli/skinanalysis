@@ -15,6 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from skin_analysis import pipeline
 from skin_analysis.face import rois, skin_mask
 from skin_analysis.schemas import ROI, RunMode, UnverifiedROIError
 from skin_analysis.util import config as cfg
@@ -123,3 +124,84 @@ def test_anchor_floor_rejects_tiny_captures() -> None:
     floor = config["scale"]["min_anchor_px"]
     assert not scale.anchor_is_sufficient(floor - 1, config)
     assert scale.anchor_is_sufficient(floor, config)
+
+
+# ---------------------------------------------------------- unusable-ROI exclusion (D7)
+
+
+def _profile_with_visibility_floor(floor: float) -> dict:
+    profile = cfg.capture_profile()
+    return {**profile, "roi_visibility": {**profile["roi_visibility"], "min_visible_frac": floor}}
+
+
+def test_low_visibility_roi_is_zeroed_but_others_survive() -> None:
+    """The mechanism the hair/shadow partial-degradation fix actually relies on: a low-
+    visibility ROI is excluded from measurement, ROIs above the floor are left untouched."""
+    shape = (300, 300)  # comfortably above every ROI's min_area_frac_of_iod2 at anchor=240
+    mask = np.ones(shape, dtype=bool)
+    composed = {
+        "forehead": np.zeros(shape, dtype=bool),  # already fully occluded
+        "left_cheek": mask.copy(),
+        "right_cheek": mask.copy(),
+    }
+    composed["forehead"][:5, :5] = True  # a sliver: low visibility, not literally empty
+    visibility = {"forehead": 0.05, "left_cheek": 0.95, "right_cheek": 0.95}
+    roi_cfg = cfg.load("rois")
+
+    pipeline._exclude_unusable_rois(
+        composed, visibility, mask, anchor_px=240.0, roi_cfg=roi_cfg,
+        profile=_profile_with_visibility_floor(0.60),
+    )
+
+    assert not composed["forehead"].any()
+    assert visibility["forehead"] == 0.0
+    assert composed["left_cheek"].all()
+    assert composed["right_cheek"].all()
+    assert visibility["left_cheek"] == 0.95
+    assert visibility["right_cheek"] == 0.95
+
+
+def test_visibility_floor_is_read_from_the_profile_not_hardcoded() -> None:
+    """CLAUDE.md §4: no magic numbers in code. Changing the configured floor must change
+    which ROIs get excluded, proving the value actually came from config."""
+    shape = (300, 300)  # comfortably above every ROI's min_area_frac_of_iod2 at anchor=240
+    mask = np.ones(shape, dtype=bool)
+    roi_cfg = cfg.load("rois")
+
+    composed_strict = {"left_cheek": mask.copy()}
+    visibility_strict = {"left_cheek": 0.50}
+    pipeline._exclude_unusable_rois(
+        composed_strict, visibility_strict, mask, 240.0, roi_cfg,
+        _profile_with_visibility_floor(0.60),
+    )
+    assert not composed_strict["left_cheek"].any()
+
+    composed_loose = {"left_cheek": mask.copy()}
+    visibility_loose = {"left_cheek": 0.50}
+    pipeline._exclude_unusable_rois(
+        composed_loose, visibility_loose, mask, 240.0, roi_cfg,
+        _profile_with_visibility_floor(0.40),
+    )
+    assert composed_loose["left_cheek"].all()
+
+
+def test_undersized_by_area_is_still_excluded_independent_of_visibility_fraction() -> None:
+    """The pre-existing D7 area floor and the visibility-fraction floor are two different
+    reasons for the SAME treatment; fixing one path must not have quietly dropped the
+    other. A tiny composed ROI can have a high visibility FRACTION (its polygon eroded to
+    almost nothing, but skin-masking cost it none of that) while still being far too few
+    pixels to trust."""
+    shape = (300, 300)  # comfortably above every ROI's min_area_frac_of_iod2 at anchor=240
+    mask = np.ones(shape, dtype=bool)
+    composed = {"left_crows_feet": np.zeros(shape, dtype=bool)}
+    composed["left_crows_feet"][:2, :2] = True  # 4px: far below any real area floor
+    visibility = {"left_crows_feet": 1.0}  # the polygon itself was already this small
+    roi_cfg = cfg.load("rois")
+
+    pipeline._exclude_unusable_rois(
+        composed, visibility, mask, anchor_px=240.0, roi_cfg=roi_cfg,
+        profile=_profile_with_visibility_floor(0.0),  # visibility floor disabled
+    )
+
+    assert not composed["left_crows_feet"].any()
+    assert visibility["left_crows_feet"] == 0.0

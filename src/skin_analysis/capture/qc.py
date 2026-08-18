@@ -113,6 +113,7 @@ def check(
     # distribution over it a distribution over failures, which is how a validation summary
     # ends up describing the opposite of what it appears to.
     metrics["skin_px"] = float(np.count_nonzero(skin))
+    shadow_asymmetry_ok = False
     if not skin.any():
         failures.append(QCFailure.OCCLUSION)
     else:
@@ -121,7 +122,8 @@ def check(
                 image, skin, config, metrics, float(face.occlusion.get("specular", 0.0))
             )
         )
-        failures.extend(_check_shadow(image, skin, config, metrics))
+        shadow_failures, shadow_asymmetry_ok = _check_shadow(image, skin, config, metrics)
+        failures.extend(shadow_failures)
 
     failures.extend(_check_roi_visibility(config, face, metrics))
     failures.extend(_check_occlusion(config, face, metrics))
@@ -143,6 +145,7 @@ def check(
         metrics=metrics,
         illumination_vector=illumination,
         device_metadata=dict(face.device_metadata),
+        shadow_asymmetry_ok=shadow_asymmetry_ok,
     )
 
 
@@ -370,12 +373,24 @@ def _check_shadow(
     skin: np.ndarray,
     config: dict,
     metrics: dict[str, float],
-) -> list[QCFailure]:
+) -> tuple[list[QCFailure], bool]:
     """Left/right luminance asymmetry and deep-shadow coverage over skin.
 
     Side lighting is the single most common cause of a false asymmetry finding, and V1
-    corrects neither shadow nor cast (D4). This check is why redness may report asymmetry
-    at all.
+    corrects neither shadow nor cast (D4).
+
+    Returns:
+        (failures, shadow_asymmetry_ok). These are DELIBERATELY separate outcomes.
+        Uneven left/right lighting invalidates a CROSS-SIDE comparison -- what redness
+        calls asymmetry -- but not what either side reads on its own; each cheek's own
+        colour is still real pixels. Rejecting the whole capture over an unreliable
+        comparison discarded every other ROI along with it, so ``shadow_asymmetry_ok``
+        alone drives ``QCVerdict.shadow_pass`` (suppressing just the comparison,
+        features/redness.py ``asymmetry()``) and never enters ``failures``.
+
+        Deep, pervasive shadow is different in kind: it is an exposure problem, and a
+        pixel too dark to trust is too dark to trust on its own, not just relative to its
+        mirror. That case stays in ``failures`` and blocks the capture.
     """
     import cv2
 
@@ -385,7 +400,7 @@ def _check_shadow(
     luma = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
     columns = np.nonzero(skin.any(axis=0))[0]
     if columns.size == 0:
-        return [QCFailure.OCCLUSION]
+        return [QCFailure.OCCLUSION], False
 
     midline = int((columns.min() + columns.max()) / 2)
     left_half = skin.copy()
@@ -395,12 +410,13 @@ def _check_shadow(
 
     overall = float(luma[skin].mean())
     if overall <= 1e-6 or not left_half.any() or not right_half.any():
-        return [QCFailure.SHADOW_ASYMMETRY]
+        # No basis for a left/right comparison at all (e.g. skin entirely on one side).
+        # Not blocking on its own -- see the docstring -- but nothing to compare either.
+        return failures, False
 
     asymmetry = abs(float(luma[left_half].mean()) - float(luma[right_half].mean())) / overall
     metrics["lr_luma_asymmetry"] = asymmetry
-    if asymmetry > float(spec["max_lr_luma_asymmetry"]):
-        failures.append(QCFailure.SHADOW_ASYMMETRY)
+    shadow_asymmetry_ok = asymmetry <= float(spec["max_lr_luma_asymmetry"])
 
     # Deep shadow RELATIVE TO THIS CAPTURE's own skin, so the test does not simply fire on
     # dark skin -- which is dark but evenly lit.
@@ -409,7 +425,7 @@ def _check_shadow(
     if deep_frac > float(spec["max_deep_shadow_frac"]):
         failures.append(QCFailure.SHADOW_ASYMMETRY)
 
-    return failures
+    return failures, shadow_asymmetry_ok
 
 
 def _check_roi_visibility(
@@ -417,6 +433,21 @@ def _check_roi_visibility(
     face: FaceObservation,
     metrics: dict[str, float],
 ) -> list[QCFailure]:
+    """Fail the capture only when NONE of the required ROIs is usable.
+
+    This used to require EVERY required ROI to individually clear the floor, which meant
+    one hair-covered forehead discarded the whole capture -- including left_cheek and
+    right_cheek, which were often still perfectly visible. That duplicated a job the
+    pipeline already does better: ``analyze_scan_internal`` zeroes any individual ROI
+    below this same floor (see the comment there) so it is never measured, and D7 reports
+    a concern UNMEASURABLE only when EVERY ONE of its own primary ROIs is gone -- a
+    per-concern policy that already knows which ROIs each concern actually needs.
+
+    What remains here is the genuine floor beneath that: if not even one of the three
+    core regions survived, there is nothing left for any concern to report from, and
+    asking for a clean retake is a better experience than running the full pipeline just
+    to get UNMEASURABLE back from every concern.
+    """
     spec = config["roi_visibility"]
     floor = float(spec["min_visible_frac"])
     required = [str(name) for name in spec.get("required", [])]
@@ -424,7 +455,7 @@ def _check_roi_visibility(
     visible = [face.roi_visibility.get(name, 0.0) for name in required]
     metrics["min_required_roi_visibility"] = float(min(visible)) if visible else 0.0
 
-    if any(v < floor for v in visible) or len(visible) < len(required):
+    if not visible or max(visible) < floor:
         return [QCFailure.INSUFFICIENT_ROI_VISIBILITY]
     return []
 
@@ -434,9 +465,26 @@ def _check_occlusion(
     face: FaceObservation,
     metrics: dict[str, float],
 ) -> list[QCFailure]:
+    """Beard and glasses still block the whole capture; hair no longer does.
+
+    Hair coverage is a WHOLE-FACE fraction, and its actual effect on measurability is
+    already better represented per ROI: hair over the forehead lowers only
+    ``roi_visibility['forehead']``, which the pipeline already zeroes when it is too low
+    (see the comment in ``analyze_scan_internal``) without discarding cheeks, nose, or
+    chin along with it. Rejecting on the whole-face fraction on top of that penalized a
+    hairstyle rather than a measurability problem -- a fringe or loose hair framing both
+    sides of the face could cross 25% of total face area while the forehead itself was
+    still mostly clear, or vice versa. The metric is still recorded for validation.
+
+    Beard and glasses stay whole-face blocks: unlike hair, their real-world coverage
+    pattern is closer to uniform across the ROI(s) they touch (chin; under-eye/nose
+    bridge), so the per-ROI mechanism buys less here, and softening them is out of scope
+    for this change.
+    """
     spec = config["occlusion"]
+    metrics["hair_frac"] = float(face.occlusion.get("hair", 0.0))
+
     limits = {
-        "hair": float(spec["max_hair_frac"]),
         "beard": float(spec["max_beard_frac"]),
         "glasses": float(spec["max_glasses_frac"]),
     }

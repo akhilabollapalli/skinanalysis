@@ -131,3 +131,221 @@ def test_illumination_vector_is_recorded(capture_config: dict) -> None:
     result = qc.check(frame, capture_config, face=None)
     assert set(result.illumination_vector) == {"r", "g", "b"}
     assert QCFailure.COLOR_CAST in result.failures
+
+
+# ------------------------------------------------------------- partial-region tolerance
+#
+# Hair coverage and left/right shadow asymmetry used to fail the WHOLE capture -- no
+# concern logic ran, for anyone, over a problem that usually affects one region (a hair-
+# covered forehead) or one specific comparison (asymmetry needs both sides evenly lit;
+# each side's own reading does not). These tests defend the fix: a local problem now stays
+# local, and the capture-level safety net still catches a genuinely unusable photo.
+
+
+def _flat_skin_image(width: int = 200, height: int = 200, value: int = 140) -> np.ndarray:
+    return np.full((height, width, 3), value, dtype=np.uint8)
+
+
+def _passing_image(
+    width: int = 800, height: int = 800, base: int = 130, noise: int = 25, seed: int = 0
+) -> np.ndarray:
+    """A synthetic capture that clears every OTHER gate: sized above min_face_px, gray
+    (zero colour cast), correctly exposed, and textured enough to clear blur.
+
+    Per-pixel independent noise, identical across channels so the image stays neutral
+    grey (no cast) while giving the blur check real high-frequency content to measure --
+    a flat image has zero laplacian variance and fails blur outright. Values verified
+    directly against config/capture_thresholds.yaml before being used here: laplacian_var
+    ~1200 (floor 120), tenengrad ~2900 (floor 60), mean_luma 130 (range 60-200), zero
+    clipping, zero gray-world deviation.
+    """
+    rng = np.random.default_rng(seed)
+    texture = rng.integers(-noise, noise + 1, size=(height, width))
+    channel = np.clip(base + texture, 0, 255).astype(np.uint8)
+    return np.stack([channel, channel, channel], axis=-1)
+
+
+def test_hair_coverage_no_longer_blocks_the_whole_capture(capture_config: dict) -> None:
+    """The flagship promise: a hair-covered forehead alone must not veto an otherwise
+    good capture. Every OTHER check here clears -- this is a full ``passed is True``,
+    not just an absent OCCLUSION reason, because that is the actual claim being made.
+
+    max_hair_frac is exceeded, which USED to be an automatic OCCLUSION failure
+    regardless of anything else in the photo.
+    """
+    hair_frac = capture_config["occlusion"]["max_hair_frac"] + 0.30
+    image = _passing_image()
+    skin = np.ones(image.shape[:2], dtype=bool)
+    face = qc.FaceObservation(
+        n_faces=1,
+        face_box=(0, 0, image.shape[1], image.shape[0]),
+        pose_deg=(0.0, 0.0, 0.0),
+        skin_mask=skin,
+        roi_visibility={"forehead": 0.1, "left_cheek": 0.95, "right_cheek": 0.95},
+        occlusion={"hair": hair_frac, "beard": 0.0, "glasses": 0.0, "specular": 0.0},
+    )
+    result = qc.check(image, capture_config, face=face)
+    assert result.passed is True
+    assert result.failures == []
+    assert result.metrics["hair_frac"] == pytest.approx(hair_frac)
+
+
+def test_beard_coverage_still_blocks_the_capture(capture_config: dict) -> None:
+    """Only hair was softened. Beard stays a whole-capture block (out of scope here)."""
+    beard_frac = capture_config["occlusion"]["max_beard_frac"] + 0.30
+    image = _flat_skin_image()
+    skin = np.ones(image.shape[:2], dtype=bool)
+    face = qc.FaceObservation(
+        n_faces=1,
+        face_box=(0, 0, image.shape[1], image.shape[0]),
+        pose_deg=(0.0, 0.0, 0.0),
+        skin_mask=skin,
+        roi_visibility={"forehead": 0.95, "left_cheek": 0.95, "right_cheek": 0.95},
+        occlusion={"hair": 0.0, "beard": beard_frac, "glasses": 0.0, "specular": 0.0},
+    )
+    result = qc.check(image, capture_config, face=face)
+    assert QCFailure.OCCLUSION in result.failures
+
+
+def test_glasses_coverage_still_blocks_the_capture(capture_config: dict) -> None:
+    glasses_frac = capture_config["occlusion"]["max_glasses_frac"] + 0.30
+    image = _flat_skin_image()
+    skin = np.ones(image.shape[:2], dtype=bool)
+    face = qc.FaceObservation(
+        n_faces=1,
+        face_box=(0, 0, image.shape[1], image.shape[0]),
+        pose_deg=(0.0, 0.0, 0.0),
+        skin_mask=skin,
+        roi_visibility={"forehead": 0.95, "left_cheek": 0.95, "right_cheek": 0.95},
+        occlusion={"hair": 0.0, "beard": 0.0, "glasses": glasses_frac, "specular": 0.0},
+    )
+    result = qc.check(image, capture_config, face=face)
+    assert QCFailure.OCCLUSION in result.failures
+
+
+def test_one_visible_required_roi_is_enough_to_proceed(capture_config: dict) -> None:
+    """Only the WORST required ROI used to matter. Now the BEST one does: the capture
+    proceeds if at least one core region survived, and D7 sorts out per-concern
+    UNMEASURABLE from there."""
+    image = _flat_skin_image()
+    skin = np.ones(image.shape[:2], dtype=bool)
+    face = qc.FaceObservation(
+        n_faces=1,
+        face_box=(0, 0, image.shape[1], image.shape[0]),
+        pose_deg=(0.0, 0.0, 0.0),
+        skin_mask=skin,
+        roi_visibility={"forehead": 0.0, "left_cheek": 0.0, "right_cheek": 0.95},
+        occlusion={"hair": 0.0, "beard": 0.0, "glasses": 0.0, "specular": 0.0},
+    )
+    result = qc.check(image, capture_config, face=face)
+    assert QCFailure.INSUFFICIENT_ROI_VISIBILITY not in result.failures
+
+
+def test_no_visible_required_roi_still_blocks(capture_config: dict) -> None:
+    """The safety net that remains: if NOTHING core survived, retake is still correct --
+    running the full pipeline just to get UNMEASURABLE back from every concern is worse
+    than one clean retake message."""
+    image = _flat_skin_image()
+    skin = np.ones(image.shape[:2], dtype=bool)
+    face = qc.FaceObservation(
+        n_faces=1,
+        face_box=(0, 0, image.shape[1], image.shape[0]),
+        pose_deg=(0.0, 0.0, 0.0),
+        skin_mask=skin,
+        roi_visibility={"forehead": 0.0, "left_cheek": 0.0, "right_cheek": 0.0},
+        occlusion={"hair": 0.0, "beard": 0.0, "glasses": 0.0, "specular": 0.0},
+    )
+    result = qc.check(image, capture_config, face=face)
+    assert QCFailure.INSUFFICIENT_ROI_VISIBILITY in result.failures
+
+
+def test_shadow_asymmetry_alone_does_not_block_the_capture(capture_config: dict) -> None:
+    """The second flagship promise: uneven left/right lighting invalidates a CROSS-SIDE
+    comparison, not what either side reads on its own. It must suppress the comparison
+    (shadow_pass=False) without veto-ing the rest of the scan -- a full ``passed is True``.
+
+    A moderate, gentle left/right gradient on top of real texture: enough to clear
+    max_lr_luma_asymmetry on its own without also crushing enough pixels dark to trip the
+    still-blocking deep-shadow check (verified below), which a harsher gradient would
+    conflate with the thing actually being tested.
+    """
+    image = _passing_image(base=130, noise=15, seed=1).astype(np.int16)
+    width = image.shape[1]
+    shift = np.zeros_like(image)
+    shift[:, : width // 2] -= 35
+    shift[:, width // 2 :] += 35
+    image = np.clip(image + shift, 0, 255).astype(np.uint8)
+
+    skin = np.ones(image.shape[:2], dtype=bool)
+    face = qc.FaceObservation(
+        n_faces=1,
+        face_box=(0, 0, image.shape[1], image.shape[0]),
+        pose_deg=(0.0, 0.0, 0.0),
+        skin_mask=skin,
+        roi_visibility={"forehead": 0.95, "left_cheek": 0.95, "right_cheek": 0.95},
+        occlusion={"hair": 0.0, "beard": 0.0, "glasses": 0.0, "specular": 0.0},
+    )
+    result = qc.check(image, capture_config, face=face)
+    assert result.metrics["lr_luma_asymmetry"] > capture_config["shadow"]["max_lr_luma_asymmetry"]
+    assert result.metrics["deep_shadow_frac"] <= capture_config["shadow"]["max_deep_shadow_frac"]
+    assert result.passed is True
+    assert result.failures == []
+    assert result.shadow_asymmetry_ok is False
+    assert result.verdict().shadow_pass is False
+
+
+def test_symmetric_lighting_leaves_shadow_pass_true(capture_config: dict) -> None:
+    image = _flat_skin_image()
+    skin = np.ones(image.shape[:2], dtype=bool)
+    face = qc.FaceObservation(
+        n_faces=1,
+        face_box=(0, 0, image.shape[1], image.shape[0]),
+        pose_deg=(0.0, 0.0, 0.0),
+        skin_mask=skin,
+        roi_visibility={"forehead": 0.95, "left_cheek": 0.95, "right_cheek": 0.95},
+        occlusion={"hair": 0.0, "beard": 0.0, "glasses": 0.0, "specular": 0.0},
+    )
+    result = qc.check(image, capture_config, face=face)
+    assert result.shadow_asymmetry_ok is True
+    assert result.verdict().shadow_pass is True
+
+
+def test_pervasive_deep_shadow_still_blocks_the_capture(capture_config: dict) -> None:
+    """Deep, pervasive shadow is an exposure problem -- a pixel too dark to trust is too
+    dark to trust on its own, not just relative to its mirror. Unlike asymmetry, this
+    stays a capture-level block (scope cut, disclosed: not made per-ROI in this change)."""
+    height, width = 200, 200
+    image = np.full((height, width, 3), 200, dtype=np.uint8)
+    # Crush most of the frame near-black, leaving a thin bright sliver on the right so a
+    # left/right comparison is still computable and does not itself trip first.
+    image[:, : width - 10] = 5
+    skin = np.ones((height, width), dtype=bool)
+    face = qc.FaceObservation(
+        n_faces=1,
+        face_box=(0, 0, width, height),
+        pose_deg=(0.0, 0.0, 0.0),
+        skin_mask=skin,
+        roi_visibility={"forehead": 0.95, "left_cheek": 0.95, "right_cheek": 0.95},
+        occlusion={"hair": 0.0, "beard": 0.0, "glasses": 0.0, "specular": 0.0},
+    )
+    result = qc.check(image, capture_config, face=face)
+    assert QCFailure.SHADOW_ASYMMETRY in result.failures
+    assert result.metrics["deep_shadow_frac"] > capture_config["shadow"]["max_deep_shadow_frac"]
+
+
+def test_capture_qc_verdict_reads_shadow_asymmetry_ok_not_the_failures_list() -> None:
+    """Direct guard on the field CaptureQC.verdict() actually consults.
+
+    QCFailure.SHADOW_ASYMMETRY can appear in ``failures`` (from deep shadow) even while
+    ``shadow_asymmetry_ok`` is True (the comparison itself was fine) -- verdict() must not
+    fall back to inferring shadow_pass from membership in ``failures``, or this exact
+    combination would silently suppress a comparison that was never actually unreliable.
+    """
+    from skin_analysis.schemas import CaptureQC
+
+    result = CaptureQC(
+        passed=False,
+        failures=[QCFailure.SHADOW_ASYMMETRY],
+        shadow_asymmetry_ok=True,
+    )
+    assert result.verdict().shadow_pass is True

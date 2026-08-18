@@ -152,12 +152,7 @@ def analyze_scan_internal(
     )
     composed = roi_layer.compose(polygons, mask)
     visibility = roi_layer.measurable_fraction(polygons, composed)
-
-    # An ROI whose eroded polygon has collapsed to a sliver still produces numbers, and
-    # those numbers look like a measurement rather than like noise (D7).
-    for name in roi_layer.undersized(composed, anchor_px, roi_cfg):
-        visibility[name] = 0.0
-        composed[name] = np.zeros_like(mask)
+    _exclude_unusable_rois(composed, visibility, mask, anchor_px, roi_cfg, profile)
 
     capture = qc.check(
         image,
@@ -182,6 +177,7 @@ def analyze_scan_internal(
             metrics={**capture.metrics, "anchor_px": anchor_px},
             illumination_vector=capture.illumination_vector,
             device_metadata=capture.device_metadata,
+            shadow_asymmetry_ok=capture.shadow_asymmetry_ok,
         )
 
     if not capture.passed:
@@ -282,6 +278,39 @@ def _detect(
         return None
     del run_mode  # verification is enforced in roi_layer.build, not duplicated here
     return points, len(faces), landmark_layer.head_pose(points, image.shape[:2])
+
+
+def _exclude_unusable_rois(
+    composed: dict[str, np.ndarray],
+    visibility: dict[str, float],
+    mask: np.ndarray,
+    anchor_px: float,
+    roi_cfg: dict,
+    profile: dict,
+) -> None:
+    """Zero any ROI too small or too occluded to trust, in place.
+
+    Two independent reasons land here with the SAME treatment:
+
+    * ``roi_layer.undersized`` -- an eroded polygon collapsed to a sliver (D7).
+    * Below ``roi_visibility.min_visible_frac`` -- the polygon survived masking at all,
+      but lost most of its area to hair, beard, shadow, or any other exclusion, so what
+      remains is not a fair sample of that region.
+
+    Zeroing here, rather than failing the whole capture, is what lets ONE bad ROI stay
+    contained to itself: whichever other ROIs a concern needs are still available, and
+    ``decision.decide`` (D7) reports a concern UNMEASURABLE only when EVERY ONE of its
+    own primary ROIs was excluded. Before this existed, a hair-covered forehead alone
+    discarded six otherwise-usable ROIs -- and every concern that needed them -- along
+    with it. ``capture.qc._check_roi_visibility`` keeps a much looser capture-level floor
+    for the case where nothing at all survives.
+    """
+    floor = float(profile["roi_visibility"]["min_visible_frac"])
+    unusable = set(roi_layer.undersized(composed, anchor_px, roi_cfg))
+    unusable |= {name for name, frac in visibility.items() if frac < floor}
+    for name in unusable:
+        visibility[name] = 0.0
+        composed[name] = np.zeros_like(mask)
 
 
 def _face_box(points: np.ndarray, shape: tuple[int, int]) -> tuple[int, int, int, int]:
