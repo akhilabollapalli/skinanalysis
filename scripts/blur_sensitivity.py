@@ -69,10 +69,15 @@ SIGMA_SWEEP = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0)
 #: docstring for why redness/pigmentation are excluded).
 _SWEPT = {"texture": texture, "wrinkles": wrinkles}
 
-#: Minimum native sharpness (tenengrad on the canonical crop) for a photo to serve as a
-#: ground-truth reference. Below this the "sharp" baseline is itself dubious, and drift
-#: measured against a dubious baseline is not evidence of anything.
-MIN_REFERENCE_TENENGRAD_MULTIPLE = 3.0
+#: Minimum native sharpness, as a multiple of EACH configured blur floor, for a photo to
+#: serve as a ground-truth reference. BOTH laplacian_var and tenengrad must clear their own
+#: multiple -- checking only one (an earlier version of this script checked tenengrad
+#: alone) let photos through whose laplacian_var sat BELOW the current
+#: capture_thresholds.yaml floor even at zero synthetic blur, so the sweep never actually
+#: bracketed the threshold it was meant to evaluate. Below this bar the "sharp" baseline
+#: is itself dubious, and drift measured against a dubious baseline is not evidence of
+#: anything.
+MIN_REFERENCE_METRIC_MULTIPLE = 2.0
 
 
 @dataclass(frozen=True)
@@ -165,8 +170,10 @@ def build_reference(
 
     face_box = _face_box(points, image.shape[:2])
     blur = _blur_metrics(image, face_box, profile)
-    floor = MIN_REFERENCE_TENENGRAD_MULTIPLE * float(profile["blur"]["min_tenengrad"])
-    if blur["tenengrad"] < floor:
+    # BOTH metrics must clear their own multiple -- see MIN_REFERENCE_METRIC_MULTIPLE.
+    lap_floor = MIN_REFERENCE_METRIC_MULTIPLE * float(profile["blur"]["min_laplacian_var"])
+    ten_floor = MIN_REFERENCE_METRIC_MULTIPLE * float(profile["blur"]["min_tenengrad"])
+    if blur["laplacian_var"] < lap_floor or blur["tenengrad"] < ten_floor:
         return None  # not sharp enough to trust as a ground-truth baseline
 
     polygons = roi_layer.build(points, image.shape[:2], roi_cfg, run_mode=RunMode.DEVELOPMENT)
@@ -353,6 +360,59 @@ def summarize(samples: list[DriftSample], cv_bounds: dict[str, float]) -> str:
     return "\n".join(lines)
 
 
+def _content_hash(path: Path) -> str:
+    import hashlib
+
+    return hashlib.md5(path.read_bytes()).hexdigest()  # noqa: S324 - dedup only
+
+
+def rank_candidates(files: list[Path], profile: dict) -> list[Path]:
+    """Deduplicated files, sharpest-first, by the SAME canonical-crop blur metrics the
+    gate itself uses.
+
+    Two things this fixes relative to a plain alphabetical scan:
+
+    * Deduplication by content hash. This corpus (like the 50-image one a B8 pass on this
+      project found to be 29 unique files) contains "- Copy" / "(copy)" duplicates. Two
+      copies of one photo are not two independent pieces of evidence about where blur
+      breaks a measurement.
+
+    * Sharpest-first ordering. With ``--limit`` capping how many (expensive) reference
+      sweeps run, taking whichever files sort alphabetically first is arbitrary and can
+      silently miss every photo sharp enough to actually bracket the CURRENT threshold --
+      exactly what happened the first time this ran against this corpus.
+
+    This is a lightweight pre-pass (face detection + a blur check only, no mask/ROI
+    construction) specifically so ranking every candidate is cheap even though sweeping
+    one is not.
+    """
+    import cv2
+
+    seen_hashes: set[str] = set()
+    scored: list[tuple[float, Path]] = []
+    for path in files:
+        digest = _content_hash(path)
+        if digest in seen_hashes:
+            continue
+        seen_hashes.add(digest)
+
+        image = cv2.imread(str(path))
+        if image is None:
+            continue
+        faces = landmark_layer.detect_faces(image, profile)
+        if not faces:
+            continue
+        points = faces[0]
+        if points.shape[0] <= scale.RIGHT_IRIS_CENTER:
+            continue
+        face_box = _face_box(points, image.shape[:2])
+        blur = _blur_metrics(image, face_box, profile)
+        scored.append((blur["laplacian_var"], path))
+
+    scored.sort(key=lambda item: -item[0])
+    return [path for _, path in scored]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, required=True)
@@ -372,9 +432,13 @@ def main() -> int:
     cv_bounds = validation_gates["repeatability"]["gates"]["raw_metric_cv"]["p95_max_cv"]
 
     files = sorted(p for p in args.corpus.rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES)
+    print(f"ranking {len(files)} file(s) by sharpness (deduplicated by content hash)...")
+    ranked = rank_candidates(files, profile)
+    print(f"{len(ranked)} unique, face-detected candidate(s)\n")
+
     samples: list[DriftSample] = []
     used = 0
-    for path in files:
+    for path in ranked:
         if args.limit is not None and used >= args.limit:
             break
         found = sweep_one(path, profile, roi_cfg, severity_cfg)
@@ -389,7 +453,7 @@ def main() -> int:
     if not samples:
         print(
             "\nno usable reference photos: none of these were sharp enough (>= "
-            f"{MIN_REFERENCE_TENENGRAD_MULTIPLE}x the current tenengrad floor) AND had a "
+            f"{MIN_REFERENCE_METRIC_MULTIPLE}x BOTH current blur floors) AND had a "
             "detectable, sufficiently large face with at least one measurable ROI.",
             file=sys.stderr,
         )

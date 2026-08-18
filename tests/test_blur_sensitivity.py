@@ -152,3 +152,39 @@ def test_only_structurally_blur_sensitive_concerns_are_swept() -> None:
     would cost real runtime for a relationship the module docstring already argues is
     weak. This test pins the deliberate scope, not an accidental omission."""
     assert set(blur_sensitivity._SWEPT) == {"texture", "wrinkles"}
+
+
+# --------------------------------------------------------------- reference selection
+
+
+def test_content_hash_is_identical_for_identical_bytes(tmp_path: Path) -> None:
+    """The dedup mechanism itself. This project's real 50-photo corpus turned out to be
+    29 unique files under "- Copy" / "(copy)" names; counting a duplicate twice is not a
+    second, independent piece of evidence about where blur breaks a measurement."""
+    a = tmp_path / "photo.jpg"
+    b = tmp_path / "photo_-_Copy.jpg"
+    a.write_bytes(b"same content, different filename")
+    b.write_bytes(b"same content, different filename")
+    assert blur_sensitivity._content_hash(a) == blur_sensitivity._content_hash(b)
+
+
+def test_content_hash_differs_for_different_bytes(tmp_path: Path) -> None:
+    a = tmp_path / "a.jpg"
+    b = tmp_path / "b.jpg"
+    a.write_bytes(b"one photo")
+    b.write_bytes(b"a different photo")
+    assert blur_sensitivity._content_hash(a) != blur_sensitivity._content_hash(b)
+
+
+def test_reference_floor_checks_both_blur_metrics_not_one() -> None:
+    """Regression test for the actual bug found on the real corpus: an earlier version
+    filtered candidate references on tenengrad alone. Every one of the first 5 unique
+    photos in data/raw/real_orig passed that filter while sitting BELOW the current
+    laplacian_var floor even at zero synthetic blur, so the sweep never bracketed the
+    threshold it was meant to evaluate -- it silently measured a different, unrelated
+    question. MIN_REFERENCE_METRIC_MULTIPLE must apply to laplacian_var too."""
+    import inspect
+
+    source = inspect.getsource(blur_sensitivity.build_reference)
+    assert "laplacian_var" in source
+    assert "MIN_REFERENCE_METRIC_MULTIPLE" in source
