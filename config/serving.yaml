@@ -1,0 +1,48 @@
+# Request-handling limits for the serving layer (D10 -- V1 runs server-side).
+#
+# These are security and capacity limits on UNTRUSTED input, not measurement thresholds.
+# They live here for the same reason every other threshold does: they must be auditable
+# and changeable without a code change (CLAUDE.md §4).
+
+meta:
+  schema_version: "1.0.0"
+
+request:
+  # Upload cap. Checked before anything decodes.
+  max_bytes: 12000000
+
+  # Decoded pixel cap, checked from the file HEADER before the decoder allocates.
+  #
+  # This is the decompression-bomb guard. A ~200 KB JPEG can declare 30000x30000 and
+  # expand to gigabytes, so an upload-size limit alone does not bound memory. 50 MP is
+  # comfortably above any phone camera (a 48 MP sensor is ~8000x6000) and far below the
+  # range where a single request can exhaust a server.
+  max_pixels: 50000000
+
+  # Floor. Below this there is no chance of a face large enough to clear min_face_px, and
+  # rejecting early is cheaper and clearer than letting QC report FACE_TOO_SMALL.
+  min_side_px: 240
+
+  # Formats whose headers this layer can measure before decoding. A format that cannot be
+  # pre-measured cannot be bomb-checked, so it is rejected rather than trusted.
+  allowed_formats: [jpeg, png, webp]
+
+  # The client's declared Content-Type is logged and then ignored in favour of the bytes'
+  # own magic number. A declared type is a claim; the magic number is evidence.
+  trust_declared_content_type: false
+
+privacy:
+  # The uploaded image is held in memory for the duration of the call and never written
+  # to disk by this layer. A face image is biometric data: retaining one turns a stateless
+  # analysis service into a store of identifiable data with its own consent, retention and
+  # deletion obligations.
+  persist_image: false
+  # Never log the bytes, and never log anything from which the image could be rebuilt.
+  log_image_bytes: false
+
+latency:
+  # D10 budget, measured from decoded image to result. Exceeding it is recorded in the
+  # internal log rather than changing the response: a slow correct answer is still correct,
+  # and silently degrading the analysis to hit a number would be the wrong trade.
+  budget_p50_ms: 1500
+  budget_p95_ms: 3000
