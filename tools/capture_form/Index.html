@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light; }
+  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 480px;
+         margin: 0 auto; padding: 16px; background: #fafafa; color: #1a1a1a; }
+  h1 { font-size: 1.25rem; margin: 8px 0 4px; }
+  .sub { color: #666; font-size: 0.9rem; margin-bottom: 16px; }
+  section { background: #fff; border: 1px solid #e2e2e2; border-radius: 10px;
+            padding: 16px; margin-bottom: 14px; }
+  label { display: block; font-weight: 600; font-size: 0.85rem; margin: 10px 0 4px; }
+  select, input[type=text] { width: 100%; padding: 8px; font-size: 1rem; border-radius: 6px;
+         border: 1px solid #ccc; box-sizing: border-box; }
+  .consent-box { max-height: 260px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px;
+                 padding: 12px; font-size: 0.88rem; line-height: 1.45; background: #fcfcfc; }
+  .consent-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; }
+  .consent-check input { width: 18px; height: 18px; margin-top: 2px; }
+  button { width: 100%; padding: 12px; font-size: 1rem; font-weight: 600; border: none;
+           border-radius: 8px; cursor: pointer; margin-top: 10px; }
+  .primary { background: #1a73e8; color: #fff; }
+  .primary:disabled { background: #b8cdf0; cursor: not-allowed; }
+  .secondary { background: #eee; color: #333; }
+  #preview { width: 100%; border-radius: 8px; margin-top: 10px; display: none; }
+  #status { margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 0.9rem;
+            display: none; white-space: pre-line; }
+  .ok { background: #e6f4ea; color: #1e7e34; }
+  .fail { background: #fce8e6; color: #c5221f; }
+  .info { background: #e8f0fe; color: #1a56b0; }
+  .hidden { display: none !important; }
+  .note { font-size: 0.78rem; color: #888; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>Skin Analysis - Reference Photo</h1>
+<div class="sub">This photo helps calibrate a skin-analysis tool. Takes about 2 minutes.</div>
+
+<!-- STEP 1: CONSENT -->
+<section id="step-consent">
+  <label style="margin-top:0">Before you continue</label>
+  <div class="consent-box" id="consent-text">Loading...</div>
+  <div class="consent-check">
+    <input type="checkbox" id="consent-checkbox">
+    <label style="margin:0;font-weight:400" for="consent-checkbox">
+      I'm 18 or over, I've read the above, and I agree to my photos and answers being used
+      as described.
+    </label>
+  </div>
+  <button class="primary" id="btn-consent-continue" disabled>Continue</button>
+</section>
+
+<!-- STEP 2: DETAILS + CAPTURE -->
+<section id="step-capture" class="hidden">
+  <label style="margin-top:0">Your ID</label>
+  <input type="text" id="subject-id" placeholder="e.g. your first name, no spaces">
+  <div class="note">Used only to group your own photos together. Not shown to anyone else.</div>
+
+  <label>Your email</label>
+  <input type="text" id="email" placeholder="so we can delete your photos if you ask">
+  <div class="note">Only used to confirm your identity if you ever ask us to delete your photos.</div>
+
+  <label>Approximate age</label>
+  <select id="age-band">
+    <option value="18-29">18-29</option>
+    <option value="30-39">30-39</option>
+    <option value="40-49">40-49</option>
+    <option value="50-59">50-59</option>
+    <option value="60+">60+</option>
+  </select>
+
+  <label>Skin tone (pick the closest match)</label>
+  <select id="skin-tone">
+    <option value="mst-01">1 - lightest</option>
+    <option value="mst-02">2</option>
+    <option value="mst-03">3</option>
+    <option value="mst-04">4</option>
+    <option value="mst-05">5</option>
+    <option value="mst-06">6</option>
+    <option value="mst-07">7</option>
+    <option value="mst-08">8</option>
+    <option value="mst-09">9</option>
+    <option value="mst-10">10 - darkest</option>
+  </select>
+  <div class="note">Rough self-estimate is fine, this just helps check the tool works fairly across skin tones.</div>
+
+  <label>Lighting right now</label>
+  <select id="lighting">
+    <option value="natural">Natural daylight (near a window)</option>
+    <option value="indoor">Indoor room lighting</option>
+    <option value="mixed">Mixed / not sure</option>
+  </select>
+
+  <label>Makeup / facial hair</label>
+  <select id="makeup">
+    <option value="none">None</option>
+    <option value="light_makeup">Light makeup</option>
+    <option value="heavy_makeup">Heavy makeup</option>
+    <option value="facial_hair">Facial hair (beard/stubble)</option>
+  </select>
+
+  <label>Photo tips</label>
+  <div style="display:flex; align-items:center; gap:14px; margin-top:4px;">
+    <svg width="90" height="120" viewBox="0 0 90 120" style="flex-shrink:0">
+      <rect x="1" y="1" width="88" height="118" rx="6" fill="#f3f3f3" stroke="#ccc"/>
+      <ellipse cx="45" cy="60" rx="30" ry="42" fill="none" stroke="#1a73e8" stroke-width="3"/>
+    </svg>
+    <div class="note" style="margin-top:0">
+      Your face should fill the oval like this &mdash; hold the phone about arm's length
+      away, look straight at the camera (not tilted up/down/sideways), even light on
+      your whole face, no sunglasses/hat. Most retakes we've needed so far were people
+      standing too far back or too blurry &mdash; this is the fix for both.
+    </div>
+  </div>
+
+  <button class="primary" id="btn-take-photo">Take / choose photo</button>
+  <input type="file" id="file-input" accept="image/*" capture="user" class="hidden">
+  <canvas id="canvas" class="hidden"></canvas>
+  <img id="preview">
+  <div id="status"></div>
+  <button class="primary hidden" id="btn-submit">Submit this photo</button>
+  <button class="secondary hidden" id="btn-retake">Retake</button>
+</section>
+
+<!-- STEP 3: DONE -->
+<section id="step-done" class="hidden">
+  <div class="ok" style="display:block;padding:12px;border-radius:8px;">
+    Saved. Thank you.
+  </div>
+  <button class="primary" id="btn-another">Submit another photo</button>
+</section>
+
+<script type="module">
+// Real face detection, client-side. Runs the SAME model family the production
+// pipeline uses server-side (MediaPipe BlazeFace short-range -- Apache-2.0,
+// already cleared for this project, see CLAUDE.md D3 / LICENSES/asset_manifest.csv).
+// This is what closes the two biggest gaps a pure blur/exposure check left open:
+// face_too_small (38/70 in the first real batch) and part of extreme_pose (21/70,
+// the roll component specifically -- yaw/pitch still aren't enforced here, see below).
+//
+// Loaded as a CDN module because Apps Script HtmlService pages run in a normal
+// browser context (unlike a stricter sandboxed environment) and can load external
+// scripts. FAILS OPEN: if the model can't load (slow connection, unsupported
+// browser, blocked CDN) within FACE_MODEL_TIMEOUT_MS, detection is skipped
+// entirely and the form behaves like the previous blur/exposure-only version --
+// a photo is never blocked by a missing model, only checked more strictly when
+// the model is actually available.
+import { FaceDetector, FilesetResolver } from
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+
+const FACE_MODEL_TIMEOUT_MS = 8000;
+
+window.__faceDetectorPromise = (async () => {
+  const vision = await FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+  );
+  return FaceDetector.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+    },
+    runningMode: 'IMAGE',
+  });
+})();
+
+// Resolves to the detector, or null if it didn't load in time / errored.
+window.__getFaceDetector = async function () {
+  try {
+    return await Promise.race([
+      window.__faceDetectorPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), FACE_MODEL_TIMEOUT_MS)),
+    ]);
+  } catch (err) {
+    console.warn('face detector failed to load, continuing without it:', err);
+    return null;
+  }
+};
+</script>
+
+<script>
+// ---- Thresholds. Exposure ones are the real config/capture_thresholds.yaml values --
+// luma/clipping don't depend on a face crop, so they transfer directly. ----
+//
+// Blur is NOT ported from config -- it's measured. After the first 70-photo cohort
+// batch, cross-referencing this page's client-side metric against the REAL server
+// gate's pass/fail (scripts/qc_report.py) showed a naive whole-frame check barely
+// correlates with the real (face-crop) blur gate at all. A CENTER CROP (assuming the
+// face is roughly centered, per the on-screen instructions) correlates much better
+// (r=-0.52 vs near 0 for whole-frame), and a single threshold on that center-crop
+// laplacian_var gets 80% agreement with the real gate on that 70-photo sample --
+// the best a browser can do without an actual face detector. minLaplacianVar below
+// is that measured value, not a guess. Re-measure if the false-accept/false-reject
+// mix looks wrong once more cohort data exists (see qc_report.py + this comment's
+// method: recompute center-crop laplacian_var per photo, compare to the real
+// 'blur' failure flag, sweep thresholds for best agreement).
+const THRESH = {
+  // Blur is measured on the REAL detected face box now (see faceCropBlur below),
+  // not a blind center-crop guess. Re-measured against the same 70-photo real
+  // corpus using the production landmark detector (not BlazeFace -- Python, offline,
+  // scripts/qc_report.py's ground truth) to crop each photo to its actual face
+  // region before computing laplacian_var/tenengrad, then swept for the best
+  // single-threshold agreement with the real blur pass/fail. Result: 90% agreement
+  // (laplacian_var) vs 80% for the earlier center-crop guess, because the crop now
+  // matches roughly where the real gate looks instead of assuming the face is
+  // centered. minLaplacianVarFaceBox/minTenengradFaceBox are ONLY valid for a crop
+  // built this way -- do not reuse them as whole-frame or center-crop numbers.
+  minLaplacianVarFaceBox: 190.0,
+  minTenengradFaceBox: 1990.0,   // independently threshold-swept, not scaled from the laplacian number
+
+  // Fallback ONLY, used when face detection is unavailable (see analyzeImage) --
+  // the earlier, less accurate center-crop measurement and its own threshold.
+  minLaplacianVar: 350.0,
+  minTenengrad: 2750.0,
+  centerCropFrac: 0.6,        // fraction of width/height kept before measuring blur (fallback only)
+  minMeanLuma: 60.0,
+  maxMeanLuma: 200.0,
+  maxClippedLowFrac: 0.02,
+  maxClippedHighFrac: 0.02,
+  clipLowLevel: 2.0,
+  clipHighLevel: 253.0,
+  minLongEdgePx: 900, // floor so a thumbnail-sized photo can't sneak through
+
+  // Real thresholds from config/capture_thresholds.yaml, checked against an ACTUAL
+  // face bounding box from the client-side detector (see the module script above) --
+  // not a proxy this time, a direct measurement, same as the server does. Only
+  // enforced when the detector loaded and found exactly one face; see analyzeImage.
+  minFaceHeightFrac: 0.35,
+  minFacePx: 768,
+  maxRollDeg: 10.0,
+  maxYawProxy: 0.35, // unvalidated heuristic, generous on purpose -- see faceMetrics comment
+
+  // Real threshold, and an EXACT replica of the server formula (not a proxy like
+  // blur) -- util/color.py's gray_world_deviation() runs on the WHOLE frame too, so
+  // there's no face-crop mismatch to approximate around. max(|channel_mean /
+  // overall_mean - 1|) across R/G/B. D4: load-bearing, nothing downstream corrects
+  // a colour cast.
+  maxGrayWorldDeviation: 0.18,
+};
+
+// Fill these in before sending the link to anyone -- see README.md "Before sending
+// this to anyone". Do not ship with the placeholders below.
+const CONTACT_EMAIL = 'ksmvenkat5799@gmail.com';
+const RETENTION_TEXT = 'until this project\'s calibration is complete';
+
+const consentTextEl = document.getElementById('consent-text');
+consentTextEl.innerHTML =
+  '<p><b>What we collect.</b> A few photos of your face, taken with on-screen guidance ' +
+  'for lighting, focus and a straight-on pose. Plus a few quick answers: your age range, ' +
+  'your own description of your skin tone on a picture scale, the lighting you\'re in, ' +
+  'and whether you\'re wearing makeup or have facial hair. We also ask for an email ' +
+  'address so you can ask us to delete your photos later.</p>' +
+  '<p><b>What it\'s for.</b> We\'re building a commercial tool that looks at a selfie and ' +
+  'describes how visible four things are: redness, dark spots, skin texture and wrinkles. ' +
+  'Your photos help it learn what the normal range looks like across many different skin ' +
+  'tones. It is <b>not</b> a medical or diagnostic tool, it does not detect any disease, ' +
+  'and nothing here is medical advice. You won\'t get a skin report back.</p>' +
+  '<p><b>Where the photos go.</b> Into a private Google Drive folder controlled by the ' +
+  'project owner. A small number of people working on the project will view them to ' +
+  'record notes like "mild redness on the left cheek." Photos are not sold and not ' +
+  'shared with unrelated companies.</p>' +
+  '<p><b>Not published.</b> Your photo won\'t be posted publicly, used in advertising, ' +
+  'or released as a public dataset.</p>' +
+  '<p><b>Your choice.</b> Taking part is entirely voluntary. You can stop at any time and ' +
+  'ask us to delete your photos &mdash; email <b>' + CONTACT_EMAIL + '</b> and we\'ll ' +
+  'delete them and confirm. No reason needed. We keep photos for up to ' +
+  '<b>' + RETENTION_TEXT + '</b> unless you ask sooner.</p>' +
+  '<p><b>You must be 18 or over.</b></p>';
+
+let qcResult = null; // {pass, reasons, base64, mimeType, metrics}
+let loadedImage = null; // kept at full resolution for the actual upload
+
+document.getElementById('consent-checkbox').addEventListener('change', (e) => {
+  document.getElementById('btn-consent-continue').disabled = !e.target.checked;
+});
+document.getElementById('btn-consent-continue').addEventListener('click', () => {
+  document.getElementById('step-consent').classList.add('hidden');
+  document.getElementById('step-capture').classList.remove('hidden');
+});
+
+document.getElementById('btn-take-photo').addEventListener('click', () => {
+  document.getElementById('file-input').click();
+});
+
+document.getElementById('file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  await handleFile(file);
+});
+
+document.getElementById('btn-retake').addEventListener('click', resetCapture);
+document.getElementById('btn-another').addEventListener('click', () => {
+  document.getElementById('step-done').classList.add('hidden');
+  document.getElementById('step-capture').classList.remove('hidden');
+  resetCapture();
+});
+
+function resetCapture() {
+  qcResult = null;
+  loadedImage = null;
+  document.getElementById('preview').style.display = 'none';
+  document.getElementById('status').style.display = 'none';
+  document.getElementById('btn-submit').classList.add('hidden');
+  document.getElementById('btn-retake').classList.add('hidden');
+  document.getElementById('file-input').value = '';
+}
+
+function handleFile(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      img.onload = async () => {
+        loadedImage = img;
+        const preview = document.getElementById('preview');
+        preview.src = ev.target.result;
+        preview.style.display = 'block';
+        await analyzeImage(img);
+        resolve();
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function faceMetrics(img, detector) {
+  // detector.detect() takes the image element directly, at its native resolution --
+  // boundingBox comes back in that image's own pixel coordinates, so faceHeightFrac
+  // and facePx below are real measurements, not scaled-canvas approximations.
+  const result = detector.detect(img);
+  const detections = result.detections || [];
+  if (detections.length === 0) {
+    return { reasons: ['No face detected. Make sure your face is clearly visible and well lit.'] };
+  }
+  if (detections.length > 1) {
+    return { reasons: ['More than one face detected. Make sure only you are in frame.'] };
+  }
+  const det = detections[0];
+  const box = det.boundingBox;
+  const faceHeightFrac = box.height / img.height;
+  const facePx = box.height;
+
+  const reasons = [];
+  if (faceHeightFrac < THRESH.minFaceHeightFrac || facePx < THRESH.minFacePx) {
+    reasons.push('Your face is too small in the frame. Move closer to the camera (or bring the phone closer to your face) until your face fills most of the photo, then retake.');
+  }
+
+  // Roll + a rough yaw estimate from keypoints. Keypoint order for BlazeFace
+  // short-range: rightEye, leftEye, noseTip, mouthCenter, rightEarTragion,
+  // leftEarTragion -- normalized [0,1], scaled here to this image's own pixels.
+  const kp = det.keypoints || [];
+  if (kp.length >= 3) {
+    const rightEye = { x: kp[0].x * img.width, y: kp[0].y * img.height };
+    const leftEye = { x: kp[1].x * img.width, y: kp[1].y * img.height };
+    const noseTip = { x: kp[2].x * img.width, y: kp[2].y * img.height };
+
+    const rollDeg = Math.atan2(leftEye.y - rightEye.y, leftEye.x - rightEye.x) * 180 / Math.PI;
+    if (Math.abs(rollDeg) > THRESH.maxRollDeg) {
+      reasons.push('Your head looks tilted. Hold the phone level and look straight at the camera.');
+    }
+
+    // Yaw proxy, NOT a measured/calibrated threshold like blur -- there wasn't
+    // enough real turned-face data in the first cohort batch to fit one the same
+    // evidence-based way. This is a standard geometric heuristic (nose-tip offset
+    // from the eye midpoint, normalized by inter-eye distance): near 0 for a
+    // frontal face, grows as the head turns. THRESH.maxYawProxy is set generously
+    // (favors letting a borderline photo through over rejecting a good one) since
+    // it's unvalidated against this project's real yaw_deg. Re-tune once there's
+    // real turned/frontal-labeled data to check it against, same method as blur.
+    const interEyeDist = Math.hypot(leftEye.x - rightEye.x, leftEye.y - rightEye.y);
+    const eyeMidX = (leftEye.x + rightEye.x) / 2;
+    const yawProxy = interEyeDist > 0 ? (noseTip.x - eyeMidX) / interEyeDist : 0;
+    if (Math.abs(yawProxy) > THRESH.maxYawProxy) {
+      reasons.push('You look turned away from the camera. Face the camera directly, straight on.');
+    }
+  }
+  // NOTE: pitch (nodding up/down) is still not checked -- the same nose-offset trick
+  // vertically is much less reliable across different face shapes (it depends on
+  // where someone's nose bridge naturally sits relative to their eyes, which varies
+  // person to person far more than the horizontal case does), so a hard reject there
+  // risked rejecting good photos of some people and not others. Left to the guide
+  // oval + instructions.
+  return { reasons, faceHeightFrac, facePx, box };
+}
+
+function faceBoxBlur(img, box) {
+  // Crop the ORIGINAL (native-resolution) image to the detected face box and
+  // measure blur there -- see the THRESH comment above for why this replaced the
+  // earlier center-crop guess. Clamped the same way the server's canonical_crop
+  // clamps a face box, in case the detector's box extends slightly past the frame.
+  const x0 = Math.max(0, Math.round(box.originX));
+  const y0 = Math.max(0, Math.round(box.originY));
+  const x1 = Math.min(img.width, Math.round(box.originX + box.width));
+  const y1 = Math.min(img.height, Math.round(box.originY + box.height));
+  if (x1 <= x0 || y1 <= y0) return null;
+
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = x1 - x0;
+  cropCanvas.height = y1 - y0;
+  const cctx = cropCanvas.getContext('2d');
+  cctx.drawImage(img, x0, y0, x1 - x0, y1 - y0, 0, 0, x1 - x0, y1 - y0);
+  const data = cctx.getImageData(0, 0, cropCanvas.width, cropCanvas.height);
+  const gray = toGrayscale(data);
+  return focusMetrics(gray, cropCanvas.width, cropCanvas.height);
+}
+
+async function analyzeImage(img) {
+  const statusEl = document.getElementById('status');
+  statusEl.style.display = 'block';
+  statusEl.className = 'info';
+  statusEl.textContent = 'Checking photo...';
+  // Hide a stale submit button from a previous photo while this one is mid-check.
+  document.getElementById('btn-submit').classList.add('hidden');
+
+  const canvas = document.getElementById('canvas');
+  // Downscale for speed; colour-cast/exposure signal survives a moderate resize fine.
+  const maxDim = 900;
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  // Colour cast: WHOLE frame, exact match to the server formula (see THRESH comment).
+  const fullData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const grayWorldDev = grayWorldDeviation(fullData);
+
+  // Exposure: center crop of the downscaled frame (unchanged method -- exposure
+  // wasn't the part shown to disagree badly with the real gate, only blur was).
+  const cw = Math.round(canvas.width * THRESH.centerCropFrac);
+  const ch = Math.round(canvas.height * THRESH.centerCropFrac);
+  const cx = Math.round((canvas.width - cw) / 2);
+  const cy = Math.round((canvas.height - ch) / 2);
+  const centerData = ctx.getImageData(cx, cy, cw, ch);
+  const centerGray = toGrayscale(centerData);
+  const { meanLuma, clippedLowFrac, clippedHighFrac } = exposureMetrics(centerGray);
+
+  const reasons = [];
+  if (Math.max(img.width, img.height) < THRESH.minLongEdgePx) {
+    reasons.push('Photo resolution is too low. Use the main camera, not a compressed/thumbnail image.');
+  }
+  if (meanLuma < THRESH.minMeanLuma) {
+    reasons.push('Photo is too dark. Move somewhere brighter, ideally facing a window.');
+  }
+  if (meanLuma > THRESH.maxMeanLuma) {
+    reasons.push('Photo is too bright / washed out. Avoid direct flash or backlight.');
+  }
+  if (clippedLowFrac > THRESH.maxClippedLowFrac) {
+    reasons.push('Large dark/shadowed areas detected. Even out the lighting on your face.');
+  }
+  if (clippedHighFrac > THRESH.maxClippedHighFrac) {
+    reasons.push('Large overexposed/blown-out areas detected. Reduce direct light or flash.');
+  }
+  if (grayWorldDev > THRESH.maxGrayWorldDeviation) {
+    reasons.push('Lighting has a strong colour tint (e.g. warm indoor bulbs). Try natural daylight or a neutral white light instead.');
+  }
+
+  // Face detection runs ONCE here and feeds THREE things: size/roll/yaw checks,
+  // AND (new) which blur measurement to trust -- the real face-box crop when a
+  // face was found, the older center-crop fallback when it wasn't. Fails open at
+  // every stage: a slow load, a failed load, an unsupported browser, or an error
+  // partway through detection all fall back gracefully, never break the flow
+  // outright. This wraps EVEN the call to window.__getFaceDetector itself, since if
+  // the module script (type="module", above) fails to import entirely -- not just
+  // slowly, but errors out or the browser doesn't support ES modules -- that
+  // function would never get defined at all, and calling an undefined function
+  // throws synchronously, outside a narrower try/catch.
+  let faceBox = null;
+  try {
+    const detector = await window.__getFaceDetector();
+    if (detector) {
+      const face = faceMetrics(img, detector);
+      reasons.push(...face.reasons);
+      faceBox = face.box || null;
+    } else {
+      console.warn('face detector unavailable, continuing without face-size/roll/yaw/face-crop-blur check');
+    }
+  } catch (err) {
+    console.warn('face check failed, continuing without it:', err);
+  }
+
+  let blur = faceBox ? faceBoxBlur(img, faceBox) : null;
+  if (blur) {
+    if (blur.laplacianVar < THRESH.minLaplacianVarFaceBox || blur.tenengrad < THRESH.minTenengradFaceBox) {
+      reasons.push('Photo looks blurry. Hold the phone steady and make sure focus locked on your face.');
+    }
+  } else {
+    // Fallback: no face box available, fall back to the earlier (less accurate)
+    // center-crop measurement and its own threshold.
+    blur = focusMetrics(centerGray, cw, ch);
+    if (blur.laplacianVar < THRESH.minLaplacianVar || blur.tenengrad < THRESH.minTenengrad) {
+      reasons.push('Photo looks blurry. Hold the phone steady and make sure focus locked on your face.');
+    }
+  }
+  const { laplacianVar, tenengrad } = blur;
+
+  qcResult = {
+    pass: reasons.length === 0,
+    reasons,
+    metrics: { laplacianVar, tenengrad, meanLuma, clippedLowFrac, clippedHighFrac },
+  };
+
+  if (qcResult.pass) {
+    statusEl.className = 'ok';
+    statusEl.textContent = 'Looks good. You can submit this photo.';
+    document.getElementById('btn-submit').classList.remove('hidden');
+  } else {
+    statusEl.className = 'fail';
+    statusEl.textContent = 'Please retake:\n- ' + reasons.join('\n- ');
+  }
+  document.getElementById('btn-retake').classList.remove('hidden');
+}
+
+function toGrayscale(imageData) {
+  const { data, width, height } = imageData;
+  const gray = new Float32Array(width * height);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    // Rec. 601 luma weights, consistent with treating this as a luminance proxy.
+    gray[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  return gray;
+}
+
+function focusMetrics(gray, w, h) {
+  // 3x3 discrete Laplacian, variance of response = laplacian_var proxy.
+  // Sobel gx/gy, mean(gx^2+gy^2) = tenengrad proxy. Both skip a 1px border.
+  let sum = 0, sumSq = 0, n = 0, tenSum = 0;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const lap = 4 * gray[i] - gray[i - 1] - gray[i + 1] - gray[i - w] - gray[i + w];
+      sum += lap; sumSq += lap * lap; n++;
+
+      const gx = (gray[i - w + 1] + 2 * gray[i + 1] + gray[i + w + 1])
+               - (gray[i - w - 1] + 2 * gray[i - 1] + gray[i + w - 1]);
+      const gy = (gray[i + w - 1] + 2 * gray[i + w] + gray[i + w + 1])
+               - (gray[i - w - 1] + 2 * gray[i - w] + gray[i - w + 1]);
+      tenSum += gx * gx + gy * gy;
+    }
+  }
+  const mean = sum / n;
+  const laplacianVar = sumSq / n - mean * mean;
+  const tenengrad = tenSum / n;
+  return { laplacianVar, tenengrad };
+}
+
+function grayWorldDeviation(rgbaData) {
+  // Exact port of util/color.py gray_world_deviation(): mean R/G/B over the WHOLE
+  // frame (not a crop -- matches the server, which measures this before any face
+  // detection happens), deviation = max(|channel_mean/overall_mean - 1|).
+  const { data } = rgbaData;
+  let sumR = 0, sumG = 0, sumB = 0;
+  const n = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    sumR += data[i]; sumG += data[i + 1]; sumB += data[i + 2];
+  }
+  const meanR = sumR / n, meanG = sumG / n, meanB = sumB / n;
+  const overall = (meanR + meanG + meanB) / 3;
+  if (overall <= 1e-6) return 0.0; // matches the black-frame guard in color.py
+  const dev = Math.max(
+    Math.abs(meanR / overall - 1), Math.abs(meanG / overall - 1), Math.abs(meanB / overall - 1)
+  );
+  return dev;
+}
+
+function exposureMetrics(gray) {
+  let sum = 0, low = 0, high = 0;
+  for (let i = 0; i < gray.length; i++) {
+    sum += gray[i];
+    if (gray[i] <= THRESH.clipLowLevel) low++;
+    if (gray[i] >= THRESH.clipHighLevel) high++;
+  }
+  return {
+    meanLuma: sum / gray.length,
+    clippedLowFrac: low / gray.length,
+    clippedHighFrac: high / gray.length,
+  };
+}
+
+document.getElementById('btn-submit').addEventListener('click', () => {
+  if (!qcResult || !qcResult.pass || !loadedImage) return;
+  // Uploads from a SEPARATE, higher-resolution render of the original file -- the
+  // small "canvas" element above is downscaled to 900px purely so the blur/exposure
+  // math runs fast, and reusing it for the upload silently capped every stored photo
+  // at 900px, well under what capture_thresholds.yaml's min_face_px (768, on the face
+  // region alone) needs. This cap (2400) stays comfortably above that with margin.
+  const uploadCanvas = document.createElement('canvas');
+  const maxUploadDim = 2400;
+  const uScale = Math.min(1, maxUploadDim / Math.max(loadedImage.width, loadedImage.height));
+  uploadCanvas.width = Math.round(loadedImage.width * uScale);
+  uploadCanvas.height = Math.round(loadedImage.height * uScale);
+  uploadCanvas.getContext('2d').drawImage(loadedImage, 0, 0, uploadCanvas.width, uploadCanvas.height);
+  const dataUrl = uploadCanvas.toDataURL('image/jpeg', 0.92);
+  const base64 = dataUrl.split(',')[1];
+
+  const subjectId = document.getElementById('subject-id').value.trim();
+  if (!/^[A-Za-z0-9_-]{2,40}$/.test(subjectId)) {
+    alert('Please enter your ID using only letters, numbers, - or _ (2-40 characters).');
+    return;
+  }
+  const email = document.getElementById('email').value.trim();
+  if (!email || email.indexOf('@') === -1) {
+    alert('Please enter a valid email so you can ask us to delete your photos later.');
+    return;
+  }
+
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
+
+  const payload = {
+    subjectId: subjectId,
+    email: email,
+    sessionId: 'a',
+    skinTone: document.getElementById('skin-tone').value,
+    device: navigator.userAgent.slice(0, 200),
+    lighting: document.getElementById('lighting').value,
+    ageBand: document.getElementById('age-band').value,
+    makeupFacialHair: document.getElementById('makeup').value,
+    consentAck: true,
+    imageBase64: base64,
+    mimeType: 'image/jpeg',
+    laplacianVar: qcResult.metrics.laplacianVar,
+    tenengrad: qcResult.metrics.tenengrad,
+    meanLuma: qcResult.metrics.meanLuma,
+    clippedLowFrac: qcResult.metrics.clippedLowFrac,
+    clippedHighFrac: qcResult.metrics.clippedHighFrac,
+  };
+
+  google.script.run
+    .withSuccessHandler(() => {
+      document.getElementById('step-capture').classList.add('hidden');
+      document.getElementById('step-done').classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = 'Submit this photo';
+    })
+    .withFailureHandler((err) => {
+      alert('Could not submit: ' + (err && err.message ? err.message : err));
+      btn.disabled = false;
+      btn.textContent = 'Submit this photo';
+    })
+    .submitCapture(payload);
+});
+</script>
+</body>
+</html>

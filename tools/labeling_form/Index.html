@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light; }
+  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 520px;
+         margin: 0 auto; padding: 16px; background: #fafafa; color: #1a1a1a; }
+  h1 { font-size: 1.2rem; margin: 8px 0 4px; }
+  .sub { color: #666; font-size: 0.88rem; margin-bottom: 16px; }
+  section { background: #fff; border: 1px solid #e2e2e2; border-radius: 10px;
+            padding: 16px; margin-bottom: 14px; }
+  label { display: block; font-weight: 600; font-size: 0.85rem; margin: 10px 0 4px; }
+  input[type=text] { width: 100%; padding: 8px; font-size: 1rem; border-radius: 6px;
+         border: 1px solid #ccc; box-sizing: border-box; }
+  button { padding: 10px 16px; font-size: 0.95rem; font-weight: 600; border: none;
+           border-radius: 8px; cursor: pointer; }
+  .primary { background: #1a73e8; color: #fff; width: 100%; margin-top: 10px; }
+  .primary:disabled { background: #b8cdf0; cursor: not-allowed; }
+  #progress { font-size: 0.8rem; color: #888; margin-bottom: 10px; }
+  #photo { width: 100%; border-radius: 8px; margin-bottom: 14px; display: block; }
+  .concern-block { margin-bottom: 16px; }
+  .concern-title { font-weight: 700; font-size: 0.95rem; text-transform: capitalize;
+                    margin-bottom: 6px; border-bottom: 2px solid #1a73e8; padding-bottom: 4px; }
+  .roi-row { display: flex; align-items: center; justify-content: space-between;
+             padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+  .roi-name { font-size: 0.88rem; text-transform: capitalize; }
+  select { padding: 6px; font-size: 0.85rem; border-radius: 6px; border: 1px solid #ccc; }
+  select.unfilled { border-color: #c5221f; background: #fce8e6; }
+  #status { margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 0.88rem;
+            display: none; }
+  .ok { background: #e6f4ea; color: #1e7e34; }
+  .fail { background: #fce8e6; color: #c5221f; }
+  .hidden { display: none !important; }
+  .note { font-size: 0.78rem; color: #888; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>Severity Labeling</h1>
+<div class="sub">For each photo: judge how visible each concern is in each face region.</div>
+
+<section id="step-rater">
+  <label style="margin-top:0">Your name or initials</label>
+  <input type="text" id="rater-id" placeholder="e.g. your first name">
+  <div class="note">Identifies your labels separately from any other rater's -- two
+    independent people labeling the same photos is how this gets checked for
+    consistency.</div>
+  <button class="primary" id="btn-start">Start</button>
+</section>
+
+<section id="step-label" class="hidden">
+  <div id="progress"></div>
+  <img id="photo" alt="subject photo">
+  <div id="concern-grid"></div>
+  <button class="primary" id="btn-submit">Submit and next photo</button>
+  <div id="status"></div>
+</section>
+
+<section id="step-done" class="hidden">
+  <div class="ok" style="display:block;padding:12px;border-radius:8px;">
+    All photos labeled. Thank you.
+  </div>
+</section>
+
+<script>
+// Must match config/severity_thresholds.yaml primary_rois for each ACTIVE concern
+// (D8) exactly -- this is the real per-concern ROI set the pipeline itself uses,
+// not a guess. Only the 4 active concerns are labeled; fine_lines/acne/pores stay
+// off regardless of data (licensing gate, not a labeling gap).
+const CONCERN_ROIS = {
+  redness: ['forehead', 'left_cheek', 'right_cheek', 'nose', 'chin'],
+  dark_spots: ['forehead', 'left_cheek', 'right_cheek', 'nose', 'chin'],
+  texture: ['forehead', 'left_cheek', 'right_cheek', 'nose'],
+  wrinkles: ['forehead', 'left_crows_feet', 'right_crows_feet', 'left_under_eye',
+             'right_under_eye', 'left_nasolabial', 'right_nasolabial'],
+};
+
+const SEVERITY_OPTIONS = [
+  { value: '', label: '-- choose --' },
+  { value: 'not_detected', label: 'Not detected' },
+  { value: 'mild', label: 'Mild' },
+  { value: 'moderate', label: 'Moderate' },
+  { value: 'high', label: 'High' },
+  { value: 'unsure', label: 'Unsure / cannot tell' },
+];
+
+let raterId = null;
+let currentSubjectId = null;
+
+const savedRater = localStorage.getItem('labeling_rater_id');
+if (savedRater) document.getElementById('rater-id').value = savedRater;
+
+document.getElementById('btn-start').addEventListener('click', () => {
+  const id = document.getElementById('rater-id').value.trim();
+  if (!id) { alert('Enter your name or initials first.'); return; }
+  raterId = id;
+  localStorage.setItem('labeling_rater_id', id);
+  document.getElementById('step-rater').classList.add('hidden');
+  document.getElementById('step-label').classList.remove('hidden');
+  loadNext();
+});
+
+function loadNext() {
+  document.getElementById('status').style.display = 'none';
+  google.script.run
+    .withSuccessHandler(updateProgress)
+    .withFailureHandler((err) => console.warn('progress failed:', err))
+    .getProgress(raterId);
+
+  google.script.run
+    .withSuccessHandler((entry) => {
+      if (!entry) {
+        document.getElementById('step-label').classList.add('hidden');
+        document.getElementById('step-done').classList.remove('hidden');
+        return;
+      }
+      currentSubjectId = entry.subjectId;
+      renderGrid();
+      document.getElementById('photo').src = ''; // clear stale image while loading
+      google.script.run
+        .withSuccessHandler((dataUrl) => { document.getElementById('photo').src = dataUrl; })
+        .withFailureHandler((err) => alert('Could not load photo: ' + err.message))
+        .getPhotoDataUrl(entry.subjectId);
+    })
+    .withFailureHandler((err) => alert('Could not load next subject: ' + err.message))
+    .getNextSubject(raterId);
+}
+
+function updateProgress(p) {
+  document.getElementById('progress').textContent = p.done + ' of ' + p.total + ' photos labeled';
+}
+
+function renderGrid() {
+  const grid = document.getElementById('concern-grid');
+  grid.innerHTML = '';
+  Object.entries(CONCERN_ROIS).forEach(([concern, rois]) => {
+    const block = document.createElement('div');
+    block.className = 'concern-block';
+    const title = document.createElement('div');
+    title.className = 'concern-title';
+    title.textContent = concern.replace('_', ' ');
+    block.appendChild(title);
+    rois.forEach((roi) => {
+      const row = document.createElement('div');
+      row.className = 'roi-row';
+      const name = document.createElement('span');
+      name.className = 'roi-name';
+      name.textContent = roi.replace(/_/g, ' ');
+      const select = document.createElement('select');
+      select.dataset.concern = concern;
+      select.dataset.roi = roi;
+      SEVERITY_OPTIONS.forEach((opt) => {
+        const o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.label;
+        select.appendChild(o);
+      });
+      row.appendChild(name);
+      row.appendChild(select);
+      block.appendChild(row);
+    });
+    grid.appendChild(block);
+  });
+}
+
+document.getElementById('btn-submit').addEventListener('click', () => {
+  const selects = Array.from(document.querySelectorAll('#concern-grid select'));
+  const unfilled = selects.filter((s) => !s.value);
+  selects.forEach((s) => s.classList.toggle('unfilled', !s.value));
+  if (unfilled.length > 0) {
+    document.getElementById('status').style.display = 'block';
+    document.getElementById('status').className = 'fail';
+    document.getElementById('status').textContent =
+      unfilled.length + ' region(s) still need a choice -- highlighted in red above.';
+    unfilled[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const labels = selects.map((s) => ({
+    concern: s.dataset.concern, roi: s.dataset.roi, severity: s.value,
+  }));
+
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
+
+  google.script.run
+    .withSuccessHandler(() => {
+      btn.disabled = false;
+      btn.textContent = 'Submit and next photo';
+      loadNext();
+    })
+    .withFailureHandler((err) => {
+      btn.disabled = false;
+      btn.textContent = 'Submit and next photo';
+      alert('Could not submit: ' + (err && err.message ? err.message : err));
+    })
+    .submitLabels({ raterId, subjectId: currentSubjectId, labels });
+});
+</script>
+</body>
+</html>

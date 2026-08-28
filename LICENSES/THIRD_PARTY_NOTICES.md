@@ -41,8 +41,30 @@ derivatives, including our re-annotations. Preserve the attribution metadata alo
 any derived labels.
 
 ### SCIN — SCIN Data Use License
-Google Research SCIN dataset. Used under its specific conditions, which include
-attribution and a no-reidentification obligation binding on this project.
+Skin Condition Image Network (SCIN), Google Research and Stanford Medicine.
+Source: https://github.com/google-research-datasets/scin — license text at
+https://github.com/google-research-datasets/scin/blob/main/LICENSE
+Cite: Ward A, Li J, Wang J, et al. "Creating an Empirical Dermatology Dataset Through
+Crowdsourcing With Web Search Advertisements." *JAMA Netw Open.* 2024;7(11):e2446615.
+doi:10.1001/jamanetworkopen.2024.46615
+
+The SCIN Data Use License contains **no non-commercial restriction**, and its Section 1(f)
+covers "the images, labeling and other data" under one grant — so images and annotations are
+cleared together. Binding conditions on this project:
+
+- **No re-identification (Section 3(b)).** "You may not make any attempt to re-identify or
+  re-link any of the individual data subjects whose data has been de-identified." Breach
+  "results in the immediate termination of all rights granted."
+- **Attribution (Section 3(a)(1)), triggered only if we Share** the material or Adapted
+  Material: retain creator identification, a copyright notice, a notice referring to the SCIN
+  License, a warranty-disclaimer notice, and a URI to the material; indicate modifications.
+- **No downstream restrictions (Section 2(a)(5)(b))** on the Licensed or Adapted Material.
+- **Not licensed (Section 2(b)):** publicity, privacy and other personality rights, and patent
+  and trademark rights.
+
+Scope in this product: dermatology-domain robustness and skin-tone coverage checks only.
+SCIN is **not** a calibration cohort and **not** severity ground truth — it carries no severity
+labels and no facial-ROI granularity. See the manifest row for the full rationale.
 
 ### SFHQ — MIT
 Synthetic Faces High Quality dataset. Used for infrastructure and QC stress testing

@@ -61,3 +61,12 @@ htmlcov/
 Thumbs.db
 .idea/
 .vscode/
+
+# Secrets
+.env
+.env.*
+kaggle.json
+
+# Cohort collection exports (manifest/contacts spreadsheets, real emails + subject data)
+*.xlsx
+SkinAnalysis-Cohort*/
